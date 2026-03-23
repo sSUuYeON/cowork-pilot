@@ -39,6 +39,11 @@
 - 사용자 데이터 삭제
 - 백업 삭제
 - git history 삭제/리베이스 (원격)
+- MCP 파일 삭제 도구 (`allow_cowork_file_delete` 등) — 기본 ESCALATE
+  - 예외: 프로젝트 `docs/golden-rules-override.md`에 "정리 허용 경로"가 명시된 경우 해당 경로만 allow 가능
+  - 발견일: 2026-03-23
+  - 원인: `mcp__cowork__allow_cowork_file_delete`를 CLI가 allow 판정함 (Bash `rm` 패턴만 체크하고 MCP 도구명을 무시)
+  - 조치: MCP 삭제 도구를 ESCALATE 블랙리스트에 추가
 
 ### 1.6 권한·보안
 - 파일 권한 변경 (chmod, chown)
@@ -77,6 +82,15 @@ ssh, scp (외부 서버)            # 원격 접근
 ~/.gitconfig                    # Git 전역 설정
 /var/*                          # 시스템 데이터
 ```
+
+### MCP 도구 — 이름에 파괴적 키워드 포함
+```
+*delete*, *remove*, *destroy*    # 삭제 계열 → ESCALATE (allow 아님, deny 아님)
+*drop*, *purge*, *truncate*      # 데이터 파괴 계열 → ESCALATE
+```
+> MCP 도구는 Bash 명령과 달리 도구 이름으로만 판단해야 한다.
+> 도구명에 위 키워드가 포함되면 기본 ESCALATE.
+> 프로젝트 override에서 특정 경로/패턴을 허용할 수 있다.
 
 ### 환경 변수 패턴
 ```

@@ -68,6 +68,17 @@ npm publish                              # 패키지 배포 — 보통 deny
 rm (단일 파일, 프로젝트 내)               # 맥락에 따라 allow 가능
 ```
 
+### MCP 도구 (이름 기반 판단)
+
+MCP 도구(`mcp__*`)는 Bash 명령과 달리 도구 이름으로 위험도를 판단한다:
+
+| 도구 이름 키워드 | 판단 | 이유 |
+|-----------------|------|------|
+| `*delete*`, `*remove*`, `*destroy*` | ESCALATE | 파괴적 동작. 프로젝트 override 없으면 사람이 결정 |
+| `*drop*`, `*purge*`, `*truncate*` | ESCALATE | 데이터 파괴 계열 |
+| `*read*`, `*get*`, `*list*`, `*search*` | allow | 읽기 전용 |
+| 그 외 | 맥락에 따라 판단 | golden-rules 체크 후 결정 |
+
 ### 무조건 거부 (Auto-Deny)
 
 golden-rules.md 블랙리스트에 해당하면 무조건 `deny`. → golden-rules.md 참조.
