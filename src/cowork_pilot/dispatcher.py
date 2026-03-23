@@ -105,7 +105,8 @@ def build_prompt(event: Event, docs_content: str = "") -> str:
                 parts.append("(Multiple selections allowed)")
         parts.append("")
         parts.append("Based on the project documents and conversation context, choose the best option.")
-        parts.append("RESPOND WITH ONLY the option number (e.g. '1') or 'Other: your custom text'.")
+        parts.append("RESPOND WITH ONLY the option number (e.g. '1'), 'Other: your custom text', or 'ESCALATE'.")
+        parts.append("Use ESCALATE if the question matches a blacklist category (payment, secrets, production deploy, etc.) or you're not confident — let the human decide.")
         parts.append("Do not explain your reasoning. Just the answer.")
 
     elif event.event_type == EventType.PERMISSION:
@@ -114,7 +115,8 @@ def build_prompt(event: Event, docs_content: str = "") -> str:
         parts.append(f"Input: {json.dumps(event.tool_input, ensure_ascii=False)}")
         parts.append("")
         parts.append("Based on the project documents (especially golden-rules), should this tool call be allowed?")
-        parts.append("RESPOND WITH ONLY 'allow' or 'deny'.")
+        parts.append("RESPOND WITH ONLY one of: 'allow', 'deny', or 'ESCALATE'.")
+        parts.append("Use ESCALATE if the tool matches a blacklist pattern (destructive commands, secrets, MCP delete tools, etc.) — let the human decide.")
         parts.append("Do not explain your reasoning. Just the answer.")
 
     elif event.event_type == EventType.FREE_TEXT:

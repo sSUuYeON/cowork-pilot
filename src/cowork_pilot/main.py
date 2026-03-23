@@ -14,6 +14,49 @@ from cowork_pilot.validator import validate_response
 from cowork_pilot.watcher import JSONLTail, WatcherStateMachine, parse_jsonl_line
 
 
+def _notify_escalate(event: Event) -> None:
+    """Send macOS notification + sound when ESCALATE is triggered.
+
+    Uses osascript to show a native macOS notification center alert
+    and plays the system alert sound so the user notices.
+    """
+    import subprocess as _sp
+
+    # Build descriptive message
+    if event.event_type == EventType.QUESTION and event.questions:
+        question_text = event.questions[0].get("question", "Unknown question")
+        body = f"Q: {question_text[:80]}"
+    elif event.event_type == EventType.PERMISSION:
+        tool_desc = event.tool_name
+        cmd = event.tool_input.get("command", event.tool_input.get("description", ""))
+        if cmd:
+            tool_desc = f"{event.tool_name}: {cmd[:60]}"
+        body = f"Tool: {tool_desc}"
+    else:
+        body = f"{event.event_type.value} — {event.tool_name}"
+
+    title = "⚠️ Cowork Pilot — ESCALATE"
+
+    # macOS notification via osascript
+    script = (
+        f'display notification "{_escape_for_applescript(body)}" '
+        f'with title "{_escape_for_applescript(title)}" '
+        f'sound name "Sosumi"'
+    )
+    try:
+        _sp.run(["osascript", "-e", script], capture_output=True, timeout=5)
+    except (OSError, _sp.TimeoutExpired):
+        pass
+
+    # Terminal bell as fallback
+    print(f"\a⚠️  ESCALATE: {body}", file=sys.stderr)
+
+
+def _escape_for_applescript(text: str) -> str:
+    """Escape special characters for AppleScript string literals."""
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def process_one_event(
     event: Event,
     jsonl_path: Path,
@@ -74,6 +117,7 @@ def process_one_event(
             event_type=event.event_type.value,
             tool_name=event.tool_name,
         )
+        _notify_escalate(event)
         return False  # Don't input anything, leave for human
 
     # 3. Build and execute AppleScript
