@@ -8,7 +8,7 @@ from cowork_pilot.config import Config, load_config
 from cowork_pilot.dispatcher import build_prompt, call_cli, load_docs
 from cowork_pilot.logger import StructuredLogger
 from cowork_pilot.models import Event, EventType, Response, WatcherState
-from cowork_pilot.responder import build_applescript, execute_applescript, post_verify_response
+from cowork_pilot.responder import build_applescript, execute_applescript, post_verify_response, set_clipboard
 from cowork_pilot.session_finder import find_active_jsonl
 from cowork_pilot.validator import validate_response
 from cowork_pilot.watcher import JSONLTail, WatcherStateMachine, parse_jsonl_line
@@ -84,6 +84,17 @@ def process_one_event(
         activate_delay=config.activate_delay_seconds,
     )
 
+    # Pre-load clipboard for actions that need paste (Other, Free Text).
+    # pbcopy works reliably outside AppleScript context.
+    if validated.action in ("other", "text") and validated.value:
+        if not set_clipboard(str(validated.value)):
+            logger.error("responder", "Failed to set clipboard via pbcopy")
+            return False
+
+    # Capture file size BEFORE AppleScript runs so post-verify doesn't
+    # miss a tool_result that arrives between osascript and the poll start.
+    pre_exec_size = jsonl_path.stat().st_size if jsonl_path.exists() else 0
+
     success = execute_applescript(script)
     if not success:
         logger.error("responder", "AppleScript execution failed")
@@ -94,6 +105,7 @@ def process_one_event(
         jsonl_path,
         event.tool_use_id,
         timeout_seconds=config.post_verify_timeout_seconds,
+        file_offset=pre_exec_size,
     )
 
     if not verified:

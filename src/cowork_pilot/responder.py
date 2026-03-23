@@ -32,6 +32,19 @@ def build_applescript(
     ]
 
     if event_type == EventType.QUESTION:
+        # Warmup: the first arrow interaction with the Cowork question
+        # dialog jumps 2 positions instead of 1.  Pressing down
+        # ceil(total_items/2) times cycles back to option 1 and
+        # stabilises subsequent navigation.
+        #   2 options (3 items) → 2 presses
+        #   3 options (4 items) → 2 presses
+        #   4 options (5 items) → 3 presses
+        warmup_presses = (num_options + 2) // 2
+        for _ in range(warmup_presses):
+            lines.append("    key code 125")  # arrow down
+            lines.append("    delay 0.1")
+        lines.append("    delay 0.1")
+
         if response.action == "select":
             # Navigate down to the right option (1-indexed, first is already selected)
             moves_down = response.value - 1
@@ -41,14 +54,16 @@ def build_applescript(
             lines.append("    keystroke return")
 
         elif response.action == "other":
-            # "Other" is the last option after all numbered options
+            # "Other"(기타) is the last item after all numbered options.
+            # Do NOT press Enter after reaching 기타 — the text input
+            # field is already active.  Just paste and submit.
             for _ in range(num_options):
                 lines.append("    key code 125")  # arrow down
                 lines.append("    delay 0.1")
-            lines.append("    keystroke return")
-            lines.append("    delay 0.3")
-            # Paste custom text via clipboard (keystroke breaks Korean IME)
+            lines.append("    delay 2.0")
+            # Paste custom text via clipboard (pre-loaded by pbcopy)
             lines.append(_clipboard_paste_block(response.value))
+            lines.append("    delay 0.3")
             lines.append("    keystroke return")
 
     elif event_type == EventType.PERMISSION:
@@ -74,16 +89,27 @@ def _escape_applescript(text: str) -> str:
 
 
 def _clipboard_paste_block(text: str) -> str:
-    """Build AppleScript lines to set clipboard and paste with Cmd+V.
+    """Build AppleScript lines to paste with Cmd+V.
 
-    This avoids Korean IME issues that break keystroke-based input.
+    The clipboard must be pre-loaded via ``set_clipboard()`` before the
+    AppleScript is executed — AppleScript's ``set the clipboard to``
+    doesn't reliably work inside ``tell process`` blocks.
     """
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-    return (
-        f'    set the clipboard to "{escaped}"\n'
-        f"    delay 0.1\n"
-        f'    keystroke "v" using command down'
-    )
+    return '    key code 9 using command down'  # key code 9 = V
+
+
+def set_clipboard(text: str) -> bool:
+    """Set the macOS clipboard via pbcopy (works outside AppleScript context)."""
+    try:
+        subprocess.run(
+            ["pbcopy"],
+            input=text.encode("utf-8"),
+            check=True,
+            timeout=5,
+        )
+        return True
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
 def execute_applescript(script: str) -> bool:
@@ -119,14 +145,22 @@ def post_verify_response(
     tool_use_id: str,
     timeout_seconds: float = 10.0,
     poll_interval: float = 0.5,
+    file_offset: int | None = None,
 ) -> bool:
     """After AppleScript input, verify that a matching tool_result appeared in JSONL.
 
     Polls the JSONL file for a tool_result with matching tool_use_id.
     Returns True if found within timeout, False otherwise.
+
+    ``file_offset`` should be the JSONL file size captured **before** the
+    AppleScript was executed.  If omitted, the current file size is used
+    (legacy behaviour — prone to race conditions).
     """
     start = _time.monotonic()
-    initial_size = jsonl_path.stat().st_size if jsonl_path.exists() else 0
+    if file_offset is not None:
+        initial_size = file_offset
+    else:
+        initial_size = jsonl_path.stat().st_size if jsonl_path.exists() else 0
 
     while (_time.monotonic() - start) < timeout_seconds:
         try:
