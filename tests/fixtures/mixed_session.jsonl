@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"웹서버를 만들어줘"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Express를 설치하겠습니다."},{"type":"tool_use","id":"toolu_bash002","name":"Bash","input":{"command":"npm init -y","description":"Initialize npm project"}}]},"timestamp":"2026-03-21T10:00:00Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash002","content":"Wrote to package.json"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_ask002","name":"AskUserQuestion","input":{"questions":[{"question":"어떤 포트를 사용할까요?","header":"Port","options":[{"label":"3000","description":"기본 포트"},{"label":"8080","description":"대체 포트"}],"multiSelect":false}]}}]},"timestamp":"2026-03-21T10:00:30Z"}

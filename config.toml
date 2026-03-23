@@ -1,0 +1,26 @@
+[engine]
+default = "claude"  # "codex" or "claude"
+
+[engine.codex]
+command = "codex"
+args = ["-q"]
+
+[engine.claude]
+command = "claude"
+args = ["-p"]
+
+[watcher]
+debounce_seconds = 2.0
+poll_interval_seconds = 0.5
+
+[responder]
+post_verify_timeout_seconds = 30.0
+max_retries = 3
+activate_delay_seconds = 0.3
+
+[session]
+base_path = "~/Library/Application Support/Claude/local-agent-mode-sessions"
+
+[logging]
+path = "logs/cowork-pilot.jsonl"
+level = "INFO"

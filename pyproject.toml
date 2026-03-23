@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cowork-pilot"
+version = "0.1.0"
+description = "Cowork auto-response agent system"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+cowork-pilot = "cowork_pilot.main:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
