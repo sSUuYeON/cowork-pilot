@@ -10,6 +10,13 @@ from cowork_pilot.models import Response, EventType
 
 APP_NAME = "Claude"
 
+# ── macOS AppleScript Key Code Reference ──────────────────────────
+# key code   9  = V      (used with `command down` for Cmd+V paste)
+# key code  53  = Escape (used to deny tool permission)
+# key code 125  = Arrow Down (used to navigate question options)
+# Full reference: https://eastmanreference.com/complete-list-of-applescript-key-codes
+# ──────────────────────────────────────────────────────────────────
+
 
 def build_applescript(
     response: Response,
@@ -60,10 +67,10 @@ def build_applescript(
             for _ in range(num_options):
                 lines.append("    key code 125")  # arrow down
                 lines.append("    delay 0.1")
-            lines.append("    delay 2.0")
+            lines.append("    delay 2.0")   # wait for "Other" text input field to appear
             # Paste custom text via clipboard (pre-loaded by pbcopy)
             lines.append(_clipboard_paste_block(response.value))
-            lines.append("    delay 0.3")
+            lines.append("    delay 0.3")  # brief pause before submit to ensure paste completes
             lines.append("    keystroke return")
 
     elif event_type == EventType.PERMISSION:
@@ -95,7 +102,7 @@ def _clipboard_paste_block(text: str) -> str:
     AppleScript is executed — AppleScript's ``set the clipboard to``
     doesn't reliably work inside ``tell process`` blocks.
     """
-    return '    key code 9 using command down'  # key code 9 = V
+    return '    key code 9 using command down'  # Cmd+V (paste from clipboard)
 
 
 def set_clipboard(text: str) -> bool:

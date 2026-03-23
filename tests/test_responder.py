@@ -7,16 +7,20 @@ def test_build_applescript_select_first_option():
     script = build_applescript(resp, EventType.QUESTION, num_options=3)
     assert 'activate' in script
     assert 'keystroke return' in script
-    # First option is already selected, just press enter
-    assert 'key code 125' not in script  # no arrow down
+    # Warmup presses = (3+2)//2 = 2, then moves_down = 0 for first option
+    # Total arrow downs = warmup only
+    warmup_presses = (3 + 2) // 2  # 2
+    assert script.count('key code 125') == warmup_presses
 
 
 def test_build_applescript_select_third_option():
     resp = Response(action="select", value=3)
     script = build_applescript(resp, EventType.QUESTION, num_options=3)
     assert 'activate' in script
-    # Need to press down arrow 2 times to get to option 3
-    assert script.count('key code 125') == 2
+    # Warmup presses = (3+2)//2 = 2, then moves_down = 2 for third option
+    warmup_presses = (3 + 2) // 2  # 2
+    moves_down = 3 - 1  # 2
+    assert script.count('key code 125') == warmup_presses + moves_down
     assert 'keystroke return' in script
 
 
@@ -25,7 +29,8 @@ def test_build_applescript_other_text():
     script = build_applescript(resp, EventType.QUESTION, num_options=3)
     assert 'activate' in script
     assert 'keystroke return' in script
-    assert '커스텀 답변' in script
+    # Text is pasted via clipboard (Cmd+V), not typed directly
+    assert 'key code 9 using command down' in script
 
 
 def test_build_applescript_allow():
@@ -46,7 +51,8 @@ def test_build_applescript_free_text():
     resp = Response(action="text", value="진행해주세요")
     script = build_applescript(resp, EventType.FREE_TEXT)
     assert 'activate' in script
-    assert '진행해주세요' in script
+    # Text is pasted via clipboard (Cmd+V), not embedded in the script
+    assert 'key code 9 using command down' in script
     assert 'keystroke return' in script
 
 

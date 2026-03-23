@@ -148,7 +148,7 @@ def call_cli(prompt: str, config: Config) -> str | None:
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=120,  # CLI agent decision timeout (seconds)
             cwd=config.project_dir,
         )
         if result.returncode != 0:
