@@ -52,6 +52,35 @@ def _notify_escalate(event: Event) -> None:
     print(f"\a⚠️  ESCALATE: {body}", file=sys.stderr)
 
 
+def _notify_allow(event: Event) -> None:
+    """Send macOS notification + sound when permission allow is needed.
+
+    Auto-Enter is unreliable for native macOS dialogs, so we notify
+    the human to click the allow button manually.
+    """
+    import subprocess as _sp
+
+    tool_desc = event.tool_name
+    cmd = event.tool_input.get("command", event.tool_input.get("description", ""))
+    if cmd:
+        tool_desc = f"{event.tool_name}: {cmd[:60]}"
+    body = f"Tool: {tool_desc}"
+
+    title = "✅ Cowork Pilot — ALLOW"
+
+    script = (
+        f'display notification "{_escape_for_applescript(body)}" '
+        f'with title "{_escape_for_applescript(title)}" '
+        f'sound name "Glass"'
+    )
+    try:
+        _sp.run(["osascript", "-e", script], capture_output=True, timeout=5)
+    except (OSError, _sp.TimeoutExpired):
+        pass
+
+    print(f"\a✅  ALLOW (please approve): {body}", file=sys.stderr)
+
+
 def _escape_for_applescript(text: str) -> str:
     """Escape special characters for AppleScript string literals."""
     return text.replace("\\", "\\\\").replace('"', '\\"')
@@ -119,6 +148,17 @@ def process_one_event(
         )
         _notify_escalate(event)
         return False  # Don't input anything, leave for human
+
+    # 2.6 Handle permission allow — notify human (auto-Enter unreliable for native dialogs)
+    if validated.action == "allow" and event.event_type == EventType.PERMISSION:
+        logger.info(
+            "validator",
+            "ALLOW — notifying human to approve",
+            event_type=event.event_type.value,
+            tool_name=event.tool_name,
+        )
+        _notify_allow(event)
+        return False  # Let human click the allow button
 
     # 3. Build and execute AppleScript
     script = build_applescript(
