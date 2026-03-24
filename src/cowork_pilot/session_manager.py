@@ -22,10 +22,7 @@ from pathlib import Path
 
 from cowork_pilot.completion_detector import (
     build_feedback_text,
-    build_verification_prompt,
-    call_verification_cli,
     is_idle_trigger,
-    parse_verification_result,
     send_feedback,
 )
 from cowork_pilot.plan_parser import Chunk, ExecPlan, parse_exec_plan, update_checkboxes
@@ -185,20 +182,44 @@ def run_chunk_verification(
     chunk: Chunk,
     harness_config: HarnessConfig,
     project_dir: str,
+    plan_path: Path | None = None,
 ) -> tuple[str, str]:
-    """Run CLI verification for a chunk.
+    """Verify chunk completion by re-reading the exec-plan file.
+
+    The Cowork session is responsible for updating checkboxes to [x]
+    when it finishes.  We simply re-parse the file and check whether
+    all criteria for this chunk are checked.
 
     Returns (status, detail) where status is COMPLETED/INCOMPLETE/ERROR.
     """
-    prompt = build_verification_prompt(chunk)
-    cli_output = call_verification_cli(
-        prompt,
-        project_dir=project_dir,
-        engine=harness_config.engine,
-        engine_command=harness_config.engine_command,
-        engine_args=harness_config.engine_args,
-    )
-    return parse_verification_result(cli_output)
+    if plan_path is None:
+        return ("ERROR", "plan_path not provided")
+
+    try:
+        fresh_plan = parse_exec_plan(plan_path)
+    except (OSError, ValueError) as exc:
+        return ("ERROR", f"Cannot read plan: {exc}")
+
+    # Find the matching chunk by number
+    fresh_chunk = None
+    for c in fresh_plan.chunks:
+        if c.number == chunk.number:
+            fresh_chunk = c
+            break
+
+    if fresh_chunk is None:
+        return ("ERROR", f"Chunk {chunk.number} not found in plan")
+
+    # Check all criteria
+    unchecked = [
+        cr.description for cr in fresh_chunk.completion_criteria
+        if not cr.checked
+    ]
+
+    if not unchecked:
+        return ("COMPLETED", "")
+
+    return ("INCOMPLETE", ", ".join(unchecked))
 
 
 def handle_chunk_completion(
@@ -231,7 +252,7 @@ def process_chunk(
     if feedback_fn is None:
         feedback_fn = send_feedback
 
-    status, detail = verify_fn(chunk, harness_config, project_dir)
+    status, detail = verify_fn(chunk, harness_config, project_dir, plan_path=plan_path)
 
     if status == "COMPLETED":
         handle_chunk_completion(plan_path, chunk)

@@ -328,3 +328,5 @@
 {"timestamp": "2026-03-24T12:49:41.052287+00:00", "level": "ERROR", "component": "main", "message": "Failed to process event", "tool_use_id": "toolu_01HgdH4Gy4MZBC9XRWPrHzBy"}
 {"timestamp": "2026-03-24T13:40:01.032809+00:00", "level": "INFO", "component": "main", "message": "Cowork Pilot starting", "engine": "claude"}
 {"timestamp": "2026-03-24T13:40:02.435890+00:00", "level": "INFO", "component": "main", "message": "Watching JSONL", "path": "/Users/yeonsu/Library/Application Support/Claude/local-agent-mode-sessions/e8b8ae28-f6dd-48b6-9a36-bfac8feea861/3323b144-d8a6-4ee3-a596-3f97638afa22/local_a481f1ed-35ba-4c01-895c-eec1c228c28b/.claude/projects/-sessions-charming-amazing-wozniak/295a968f-62f7-428b-bf9f-525d78413815.jsonl"}
+{"timestamp": "2026-03-24T14:17:47.239393+00:00", "level": "INFO", "component": "main", "message": "Cowork Pilot starting in HARNESS mode", "engine": "claude"}
+{"timestamp": "2026-03-24T14:17:47.239956+00:00", "level": "ERROR", "component": "harness", "message": "No active exec-plan found", "dir": "docs/exec-plans/active"}

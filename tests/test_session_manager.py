@@ -189,7 +189,7 @@ class TestProcessChunk:
         config = HarnessConfig()
         retry = ChunkRetryState()
 
-        def mock_verify(c, cfg, pd):
+        def mock_verify(c, cfg, pd, plan_path=None):
             return ("COMPLETED", "")
 
         result = process_chunk(
@@ -205,7 +205,7 @@ class TestProcessChunk:
         config = HarnessConfig()
         retry = ChunkRetryState()
 
-        def mock_verify(c, cfg, pd):
+        def mock_verify(c, cfg, pd, plan_path=None):
             return ("INCOMPLETE", "pytest failed")
 
         feedback_sent = []
@@ -229,7 +229,7 @@ class TestProcessChunk:
         config = HarnessConfig(incomplete_retry_max=2)
         retry = ChunkRetryState(incomplete_feedback_count=2)
 
-        def mock_verify(c, cfg, pd):
+        def mock_verify(c, cfg, pd, plan_path=None):
             return ("INCOMPLETE", "still failing")
 
         result = process_chunk(
@@ -245,7 +245,7 @@ class TestProcessChunk:
         config = HarnessConfig()
         retry = ChunkRetryState()
 
-        def mock_verify(c, cfg, pd):
+        def mock_verify(c, cfg, pd, plan_path=None):
             return ("ERROR", "timeout")
 
         result = process_chunk(
@@ -262,7 +262,7 @@ class TestProcessChunk:
         config = HarnessConfig(completion_check_max_retries=2)
         retry = ChunkRetryState(cli_failure_count=2)
 
-        def mock_verify(c, cfg, pd):
+        def mock_verify(c, cfg, pd, plan_path=None):
             return ("ERROR", "timeout")
 
         result = process_chunk(
@@ -270,6 +270,57 @@ class TestProcessChunk:
             retry, verify_fn=mock_verify,
         )
         assert result == "ESCALATE"
+
+
+# ── File-based verification ──────────────────────────────────────────
+
+class TestRunChunkVerification:
+    """run_chunk_verification re-parses the plan file on disk."""
+
+    def test_all_checked_returns_completed(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(
+            "# Test Plan\n\n"
+            "## Chunk 1: Setup\n\n"
+            "### Completion Criteria\n"
+            "- [x] file exists\n"
+            "- [x] build passes\n\n"
+            "### Session Prompt\n```\ndo stuff\n```\n",
+            encoding="utf-8",
+        )
+        chunk = Chunk(name="Setup", number=1, session_prompt="do stuff")
+        config = HarnessConfig()
+        status, detail = run_chunk_verification(chunk, config, "/tmp", plan_path=plan_file)
+        assert status == "COMPLETED"
+
+    def test_unchecked_returns_incomplete(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(
+            "# Test Plan\n\n"
+            "## Chunk 1: Setup\n\n"
+            "### Completion Criteria\n"
+            "- [x] file exists\n"
+            "- [ ] build passes\n\n"
+            "### Session Prompt\n```\ndo stuff\n```\n",
+            encoding="utf-8",
+        )
+        chunk = Chunk(name="Setup", number=1, session_prompt="do stuff")
+        config = HarnessConfig()
+        status, detail = run_chunk_verification(chunk, config, "/tmp", plan_path=plan_file)
+        assert status == "INCOMPLETE"
+        assert "build passes" in detail
+
+    def test_missing_plan_returns_error(self):
+        chunk = Chunk(name="Setup", number=1, session_prompt="do stuff")
+        config = HarnessConfig()
+        status, _ = run_chunk_verification(chunk, config, "/tmp", plan_path=Path("/nonexistent"))
+        assert status == "ERROR"
+
+    def test_no_plan_path_returns_error(self):
+        chunk = Chunk(name="Setup", number=1, session_prompt="do stuff")
+        config = HarnessConfig()
+        status, _ = run_chunk_verification(chunk, config, "/tmp", plan_path=None)
+        assert status == "ERROR"
 
 
 # ── notify_escalate ──────────────────────────────────────────────────

@@ -69,6 +69,16 @@ class TestIsIdleTrigger:
         record = {"type": "user"}
         assert is_idle_trigger(record, 0.0, 200.0, idle_timeout_seconds=120.0) is False
 
+    def test_last_prompt_record_triggers(self):
+        """'last-prompt' is a bookkeeping record appended after the assistant's
+        final turn — treat it as a session-end signal (safety net)."""
+        record = {"type": "last-prompt", "message": {"content": ""}}
+        assert is_idle_trigger(record, 0.0, 200.0, idle_timeout_seconds=120.0) is True
+
+    def test_last_prompt_not_enough_time(self):
+        record = {"type": "last-prompt"}
+        assert is_idle_trigger(record, 100.0, 150.0, idle_timeout_seconds=120.0) is False
+
     def test_custom_timeout(self):
         record = {"type": "summary"}
         # 50 seconds elapsed, timeout=30 → should trigger

@@ -48,7 +48,7 @@ class TestFullPipeline:
         # Track which chunks were processed
         processed_chunks = []
 
-        def mock_verify(chunk, cfg, pd):
+        def mock_verify(chunk, cfg, pd, plan_path=None):
             processed_chunks.append(chunk.number)
             return ("COMPLETED", "")
 
@@ -86,7 +86,7 @@ class TestFullPipeline:
 
         call_count = [0]
 
-        def mock_verify(chunk, cfg, pd):
+        def mock_verify(chunk, cfg, pd, plan_path=None):
             call_count[0] += 1
             if call_count[0] == 1:
                 return ("INCOMPLETE", "pytest failed")
@@ -237,6 +237,35 @@ class TestIdleDetectionIntegration:
         }
         assert is_idle_trigger(record, 0.0, 130.0) is True
 
+    def test_parsed_record_never_triggers(self):
+        """Bug repro: if last_record is a parsed dict from parse_jsonl_line
+        (type="user" with tool_results key), idle trigger never fires because
+        is_idle_trigger expects raw JSONL records (type="assistant"/"summary").
+        This was the root cause of harness not transitioning between chunks."""
+        # This is what parse_jsonl_line returns — a processed dict
+        parsed_record = {
+            "type": "user",
+            "tool_results": ["toolu_abc"],
+            "raw": {"type": "user", "message": {"content": []}},
+        }
+        # Even after long timeout, this should NOT trigger (user type)
+        assert is_idle_trigger(parsed_record, 0.0, 999.0) is False
+
+    def test_raw_assistant_end_turn_triggers(self):
+        """Fix verification: raw JSONL assistant record with end_turn and no
+        tool_use triggers idle correctly — this is what the harness loop
+        should store in last_record."""
+        raw_record = {
+            "type": "assistant",
+            "message": {
+                "stop_reason": "end_turn",
+                "content": [
+                    {"type": "text", "text": "Chunk 1 구현이 완료되었습니다."},
+                ],
+            },
+        }
+        assert is_idle_trigger(raw_record, 0.0, 130.0) is True
+
     def test_no_trigger_during_active_work(self):
         """Tool use in progress → no trigger even after timeout."""
         record = {
@@ -249,6 +278,49 @@ class TestIdleDetectionIntegration:
             },
         }
         assert is_idle_trigger(record, 0.0, 130.0) is False
+
+    def test_last_prompt_overwrites_and_triggers(self):
+        """Real scenario: assistant final record has stop_reason: null
+        (streaming artifact), followed by last-prompt.  The harness stores
+        all records in last_record, so last-prompt ends up as last_record.
+        is_idle_trigger treats last-prompt as a session-end signal."""
+        import json as _json
+
+        lines = [
+            _json.dumps({"type": "assistant", "message": {
+                "stop_reason": None,
+                "content": [{"type": "text", "text": "Done."}],
+            }}),
+            _json.dumps({"type": "last-prompt", "lastPrompt": "..."}),
+        ]
+
+        # Replicate the harness loop's raw-record storage logic (no filter)
+        last_record = None
+        for line in lines:
+            try:
+                raw = _json.loads(line.strip())
+                if isinstance(raw, dict):
+                    last_record = raw
+            except (ValueError, _json.JSONDecodeError):
+                pass
+
+        # last_record IS last-prompt now — and idle trigger handles it
+        assert last_record is not None
+        assert last_record["type"] == "last-prompt"
+        assert is_idle_trigger(last_record, 0.0, 130.0) is True
+
+    def test_last_prompt_direct_idle_trigger(self):
+        """is_idle_trigger recognizes last-prompt as session-end signal."""
+        record = {"type": "last-prompt"}
+        assert is_idle_trigger(record, 0.0, 130.0) is True
+
+    def test_assistant_end_turn_still_triggers(self):
+        """Normal case: assistant with stop_reason end_turn still works."""
+        record = {"type": "assistant", "message": {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "Done."}],
+        }}
+        assert is_idle_trigger(record, 0.0, 130.0) is True
 
 
 # ── Verification prompt → parse roundtrip ────────────────────────────

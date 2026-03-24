@@ -44,7 +44,9 @@ def is_idle_trigger(
     record_type = last_record.get("type")
 
     # Condition A (priority): summary record = turn fully complete
-    if record_type == "summary":
+    # Also treat "last-prompt" as session-end (bookkeeping record
+    # appended after the assistant's final turn).
+    if record_type in ("summary", "last-prompt"):
         return True
 
     # Condition B (fallback): assistant end_turn without tool_use
@@ -65,18 +67,27 @@ def is_idle_trigger(
 # ── CLI verification ─────────────────────────────────────────────────
 
 def build_verification_prompt(chunk: Chunk) -> str:
-    """Build a prompt for the CLI agent to verify completion criteria."""
+    """Build a prompt for the CLI agent to verify completion criteria.
+
+    The prompt asks the CLI to check whether the exec-plan checkboxes
+    are already marked [x] — it does NOT ask it to re-run builds or
+    verify files on disk.  The Cowork session itself is responsible for
+    running builds and updating the checkboxes before finishing.
+    """
     criteria_text = "\n".join(
         f"  {i+1}. {'[x]' if c.checked else '[ ]'} {c.description}"
         for i, c in enumerate(chunk.completion_criteria)
     )
     return (
-        f"다음 exec-plan의 Chunk {chunk.number} 완료 조건을 검증해:\n"
+        f"아래는 exec-plan Chunk {chunk.number}의 완료 조건 체크박스 현재 상태야.\n"
+        f"직접 파일을 확인하거나 명령어를 실행하지 마.\n"
+        f"체크박스 상태만 보고 판단해:\n"
         f"\n"
         f"{criteria_text}\n"
         f"\n"
-        f"각 조건을 확인하고, 모두 충족되면 \"COMPLETED\"를, 하나라도 미충족이면\n"
-        f"\"INCOMPLETE: {{미충족 항목}}\"을 리턴해."
+        f"모든 항목이 [x]이면 \"COMPLETED\"만 출력해.\n"
+        f"[x]가 아닌 항목이 하나라도 있으면 \"INCOMPLETE: {{미충족 항목 목록}}\"을 출력해.\n"
+        f"다른 설명 없이 COMPLETED 또는 INCOMPLETE: ... 한 줄만 출력해."
     )
 
 
@@ -97,6 +108,8 @@ def call_verification_cli(
 
     cmd = [engine_command] + engine_args + [prompt]
     try:
+        import sys as _sys
+        print(f"  [verify] cmd={cmd[:2]}... cwd={project_dir}", file=_sys.stderr)
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -105,9 +118,17 @@ def call_verification_cli(
             cwd=project_dir,
         )
         if result.returncode != 0:
+            print(f"  [verify] FAILED rc={result.returncode}", file=_sys.stderr)
+            if result.stderr:
+                print(f"  [verify] stderr: {result.stderr[:300]}", file=_sys.stderr)
+            if result.stdout:
+                print(f"  [verify] stdout: {result.stdout[:300]}", file=_sys.stderr)
             return None
-        return result.stdout.strip()
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
+        stdout = result.stdout.strip()
+        print(f"  [verify] OK, stdout({len(stdout)} chars): {stdout[:300]}", file=_sys.stderr)
+        return stdout
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as exc:
+        print(f"  [verify] EXCEPTION: {exc}", file=_sys.stderr)
         return None
 
 

@@ -25,6 +25,9 @@ base_path = "~/Library/Application Support/Claude/local-agent-mode-sessions"
 path = "logs/cowork-pilot.jsonl"
 level = "INFO"
 
+# [project]
+# dir = 
+
 [harness]
 idle_timeout_seconds = 120
 completion_check_max_retries = 3

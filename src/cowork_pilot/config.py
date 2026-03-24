@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,13 +25,15 @@ class Config:
     session_base_path: str = "~/Library/Application Support/Claude/local-agent-mode-sessions"
     log_path: str = "logs/cowork-pilot.jsonl"
     log_level: str = "INFO"
-    project_dir: str = "."
+    project_dir: str = ""  # resolved to cwd in __post_init__
 
     def __post_init__(self):
         if self.codex_args is None:
             self.codex_args = ["-q"]
         if self.claude_args is None:
             self.claude_args = ["-p"]
+        if not self.project_dir:
+            self.project_dir = os.getcwd()
 
 
 @dataclass
@@ -74,6 +77,7 @@ def load_config(path: Path) -> Config:
         session_base_path=data.get("session", {}).get("base_path", "~/Library/Application Support/Claude/local-agent-mode-sessions"),
         log_path=data.get("logging", {}).get("path", "logs/cowork-pilot.jsonl"),
         log_level=data.get("logging", {}).get("level", "INFO"),
+        project_dir=data.get("project", {}).get("dir", os.getcwd()),
     )
 
 

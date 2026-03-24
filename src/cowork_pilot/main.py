@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -389,10 +390,26 @@ def run_harness(config: Config, harness_config: HarnessConfig) -> None:
                     last_record_time = time.monotonic()
 
                 for line in new_lines:
+                    # Store raw JSONL record for idle detection.
+                    # is_idle_trigger needs the original record (e.g. assistant
+                    # end_turn with no tool_use) — parse_jsonl_line only returns
+                    # records that have tool_use/tool_result blocks.
+                    #
+                    # All record types are stored including "last-prompt" —
+                    # is_idle_trigger handles it as a session-end signal.
+                    # The final assistant record may have stop_reason: null
+                    # (streaming artifact), so we rely on "last-prompt" as
+                    # the definitive session-completion marker.
+                    try:
+                        raw_record = json.loads(line.strip())
+                        if isinstance(raw_record, dict):
+                            last_record = raw_record
+                    except (ValueError, json.JSONDecodeError):
+                        pass
+
                     parsed = parse_jsonl_line(line)
                     if parsed is None:
                         continue
-                    last_record = parsed  # Track for idle detection
 
                     if parsed["type"] == "assistant":
                         for tu in parsed["tool_uses"]:
