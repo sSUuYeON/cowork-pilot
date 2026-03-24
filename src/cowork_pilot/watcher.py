@@ -60,6 +60,27 @@ import time as _time
 from cowork_pilot.models import WatcherState, EventType, Event
 
 
+# ── Cowork permission dialog policy ─────────────────────────────────
+# Cowork runs inside a sandboxed VM.  Most tools (Bash, Read, Write,
+# Edit, Glob, Grep, Agent, …) are auto-approved — no permission dialog
+# ever appears.  Only a handful of tools actually show a dialog that
+# requires user interaction:
+#
+#   • AskUserQuestion  → classified as QUESTION (already handled)
+#   • allow_cowork_file_delete → file-deletion confirmation
+#   • request_cowork_directory → folder-mount picker
+#
+# Any tool NOT in DIALOG_TOOLS is silently ignored by the state machine
+# so the watcher never tries to press Enter on a non-existent dialog.
+# ─────────────────────────────────────────────────────────────────────
+DIALOG_TOOLS: frozenset[str] = frozenset({
+    "AskUserQuestion",
+    # MCP tools that show a dialog in Cowork
+    "mcp__cowork__allow_cowork_file_delete",
+    "mcp__cowork__request_cowork_directory",
+})
+
+
 class WatcherStateMachine:
     """State machine for detecting unanswered tool_use in JSONL stream.
 
@@ -73,7 +94,14 @@ class WatcherStateMachine:
         self._detected_at: float = 0.0
 
     def on_tool_use(self, tool_use: dict) -> None:
-        """Called when a new tool_use block is parsed from JSONL."""
+        """Called when a new tool_use block is parsed from JSONL.
+
+        Tools not in ``DIALOG_TOOLS`` are silently ignored — Cowork
+        auto-approves them inside the VM sandbox, so no permission
+        dialog will ever appear for them.
+        """
+        if tool_use["name"] not in DIALOG_TOOLS:
+            return  # auto-approved tool, no dialog to handle
         self.pending_tool_use = tool_use
         self._detected_at = _time.monotonic()
         self.state = WatcherState.TOOL_USE_DETECTED

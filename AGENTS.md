@@ -27,6 +27,19 @@ Auto-response agent for Cowork. Watches JSONL, judges questions via CLI agents, 
 - Functions over classes for pipeline steps
 - All tests in `tests/`, mirroring `src/` structure
 
+## Project Conventions
+
+`docs/project-conventions.md` 참조 — 폴더 구조, AGENTS.md 형식, spec/exec-plan 작성 규칙 정의.
+하네스 오케스트레이터가 실행하는 모든 프로젝트가 이 컨벤션을 따른다.
+
+## Harness (자동 실행 시스템)
+
+- `docs/exec-plans/active/` — 현재 진행 중인 구현 계획
+- `docs/exec-plans/completed/` — 완료된 구현 계획
+- exec-plan 포맷: Chunk별 Tasks + Completion Criteria + Session Prompt
+- Chunk 완료 시 체크박스 `[x]`로 업데이트됨
+- `--mode harness` 플래그로 실행
+
 ## Key Design Decision
 
 CLI 에이전트는 AGENTS.md를 자동으로 읽지 않을 수 있다. Dispatcher가 docs/의 내용을

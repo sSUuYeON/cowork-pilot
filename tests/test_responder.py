@@ -37,7 +37,8 @@ def test_build_applescript_allow():
     resp = Response(action="allow")
     script = build_applescript(resp, EventType.PERMISSION)
     assert 'activate' in script
-    assert 'keystroke return' in script  # Enter = allow
+    assert 'key code 48' in script   # Tab to unfocus chat input
+    assert 'key code 36' in script   # Return to allow
 
 
 def test_build_applescript_deny():
@@ -112,3 +113,55 @@ def test_post_verify_timeout(tmp_path):
 
     result = post_verify_response(jsonl, "toolu_never", timeout_seconds=0.2, poll_interval=0.05)
     assert result is False
+
+
+# --- has_tool_result_arrived Tests ---
+from cowork_pilot.responder import has_tool_result_arrived
+
+
+def test_has_tool_result_arrived_true(tmp_path):
+    """tool_result already in JSONL → returns True."""
+    jsonl = tmp_path / "session.jsonl"
+    records = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_abc123", "name": "Bash", "input": {"command": "ls"}}
+        ]}},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_abc123", "content": "file1.txt\nfile2.txt"}
+        ]}},
+    ]
+    jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+    assert has_tool_result_arrived(jsonl, "toolu_abc123") is True
+
+
+def test_has_tool_result_arrived_false(tmp_path):
+    """tool_use without matching tool_result → returns False."""
+    jsonl = tmp_path / "session.jsonl"
+    records = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_abc123", "name": "Bash", "input": {"command": "ls"}}
+        ]}},
+    ]
+    jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+    assert has_tool_result_arrived(jsonl, "toolu_abc123") is False
+
+
+def test_has_tool_result_arrived_wrong_id(tmp_path):
+    """tool_result for a different tool_use_id → returns False."""
+    jsonl = tmp_path / "session.jsonl"
+    records = [
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_other", "content": "ok"}
+        ]}},
+    ]
+    jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+    assert has_tool_result_arrived(jsonl, "toolu_abc123") is False
+
+
+def test_has_tool_result_arrived_missing_file(tmp_path):
+    """JSONL file doesn't exist → returns False (no crash)."""
+    jsonl = tmp_path / "nonexistent.jsonl"
+    assert has_tool_result_arrived(jsonl, "toolu_abc123") is False

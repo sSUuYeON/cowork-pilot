@@ -100,9 +100,43 @@ def test_state_machine_tool_result_resets():
 
 def test_state_machine_consecutive_tool_use_keeps_latest():
     sm = WatcherStateMachine(debounce_seconds=0.1)
-    sm.on_tool_use({"id": "toolu_001", "name": "Bash", "input": {}})
-    sm.on_tool_use({"id": "toolu_002", "name": "AskUserQuestion", "input": {}})
+    sm.on_tool_use({"id": "toolu_001", "name": "AskUserQuestion", "input": {}})
+    sm.on_tool_use({"id": "toolu_002", "name": "mcp__cowork__allow_cowork_file_delete", "input": {}})
     assert sm.pending_tool_use["id"] == "toolu_002"
+
+
+def test_state_machine_ignores_auto_approved_tools():
+    """Tools not in DIALOG_TOOLS (Bash, Read, Edit, etc.) should be silently ignored."""
+    sm = WatcherStateMachine(debounce_seconds=0.01)
+    sm.on_tool_use({"id": "toolu_001", "name": "Bash", "input": {"command": "npm run build"}})
+    # State should remain IDLE — Bash is auto-approved in Cowork
+    assert sm.state == WatcherState.IDLE
+    assert sm.pending_tool_use is None
+
+
+def test_state_machine_accepts_dialog_tools():
+    """Tools in DIALOG_TOOLS should be tracked normally."""
+    sm = WatcherStateMachine(debounce_seconds=0.01)
+    sm.on_tool_use({"id": "toolu_001", "name": "AskUserQuestion", "input": {}})
+    assert sm.state == WatcherState.TOOL_USE_DETECTED
+
+    sm2 = WatcherStateMachine(debounce_seconds=0.01)
+    sm2.on_tool_use({"id": "toolu_002", "name": "mcp__cowork__allow_cowork_file_delete", "input": {}})
+    assert sm2.state == WatcherState.TOOL_USE_DETECTED
+
+    sm3 = WatcherStateMachine(debounce_seconds=0.01)
+    sm3.on_tool_use({"id": "toolu_003", "name": "mcp__cowork__request_cowork_directory", "input": {}})
+    assert sm3.state == WatcherState.TOOL_USE_DETECTED
+
+
+def test_state_machine_ignores_various_auto_approved():
+    """Verify multiple commonly used auto-approved tools are all ignored."""
+    sm = WatcherStateMachine(debounce_seconds=0.01)
+    auto_tools = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent",
+                   "mcp__codex__codex", "TodoWrite", "WebSearch", "WebFetch"]
+    for name in auto_tools:
+        sm.on_tool_use({"id": f"toolu_{name}", "name": name, "input": {}})
+        assert sm.state == WatcherState.IDLE, f"{name} should be ignored but wasn't"
 
 
 def test_state_machine_get_pending_event():

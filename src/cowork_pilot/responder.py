@@ -75,9 +75,17 @@ def build_applescript(
 
     elif event_type == EventType.PERMISSION:
         if response.action == "allow":
-            lines.append("    keystroke return")  # Enter = allow
+            # Tab to unfocus chat input → Enter to allow → restore chat focus
+            # (permission dialog only captures Enter when chat input is unfocused)
+            lines.append("    key code 48")       # Tab — unfocus chat input
+            lines.append("    delay 0.1")
+            lines.append("    key code 36")       # Return — allow
+            lines.append("    delay 0.3")
+            lines.append("    keystroke \"1\"")   # type char to refocus chat input
+            lines.append("    delay 0.2")         # wait for chat input to accept the char
+            lines.append("    key code 51")       # Backspace — delete the char
         elif response.action == "deny":
-            lines.append("    key code 53")  # Esc = deny
+            lines.append("    key code 53")  # Esc = deny (works globally)
 
     elif event_type == EventType.FREE_TEXT:
         # Paste via clipboard (keystroke breaks Korean IME)
@@ -145,6 +153,42 @@ def execute_applescript(script: str) -> bool:
     except OSError as e:
         print(f"  [responder] OSError: {e}", file=_sys.stderr)
         return False
+
+
+def has_tool_result_arrived(jsonl_path: Path, tool_use_id: str) -> bool:
+    """Quick scan: check if a tool_result for *tool_use_id* already exists in JSONL.
+
+    Reads the entire file (fast for typical session sizes) and returns True
+    if a matching ``tool_result`` block is found.  This is used as a
+    just-in-time guard before sending AppleScript — if Cowork auto-approved
+    the tool and it already finished, there's no permission dialog to click.
+    """
+    try:
+        text = jsonl_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return False
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("type") != "user":
+            continue
+        content = record.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("tool_use_id") == tool_use_id
+            ):
+                return True
+    return False
 
 
 def post_verify_response(

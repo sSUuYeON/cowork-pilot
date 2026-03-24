@@ -1,5 +1,5 @@
 [engine]
-default = "claude"  # "codex" or "claude"
+default = "claude"
 
 [engine.codex]
 command = "codex"
@@ -24,3 +24,15 @@ base_path = "~/Library/Application Support/Claude/local-agent-mode-sessions"
 [logging]
 path = "logs/cowork-pilot.jsonl"
 level = "INFO"
+
+[harness]
+idle_timeout_seconds = 120
+completion_check_max_retries = 3
+incomplete_retry_max = 3
+exec_plans_dir = "docs/exec-plans"
+
+[harness.session]
+open_delay_seconds = 3.0
+prompt_delay_seconds = 1.0
+detect_timeout_seconds = 10.0
+detect_poll_interval = 1.0

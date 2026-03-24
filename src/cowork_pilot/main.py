@@ -4,11 +4,11 @@ import sys
 import time
 from pathlib import Path
 
-from cowork_pilot.config import Config, load_config
+from cowork_pilot.config import Config, HarnessConfig, load_config, load_harness_config
 from cowork_pilot.dispatcher import build_prompt, call_cli, load_docs
 from cowork_pilot.logger import StructuredLogger
 from cowork_pilot.models import Event, EventType, Response, WatcherState
-from cowork_pilot.responder import build_applescript, execute_applescript, post_verify_response, set_clipboard
+from cowork_pilot.responder import build_applescript, execute_applescript, has_tool_result_arrived, post_verify_response, set_clipboard
 from cowork_pilot.session_finder import find_active_jsonl
 from cowork_pilot.validator import validate_response
 from cowork_pilot.watcher import JSONLTail, WatcherStateMachine, parse_jsonl_line
@@ -51,34 +51,13 @@ def _notify_escalate(event: Event) -> None:
     # Terminal bell as fallback
     print(f"\a⚠️  ESCALATE: {body}", file=sys.stderr)
 
-
-def _notify_allow(event: Event) -> None:
-    """Send macOS notification + sound when permission allow is needed.
-
-    Auto-Enter is unreliable for native macOS dialogs, so we notify
-    the human to click the allow button manually.
-    """
-    import subprocess as _sp
-
-    tool_desc = event.tool_name
-    cmd = event.tool_input.get("command", event.tool_input.get("description", ""))
-    if cmd:
-        tool_desc = f"{event.tool_name}: {cmd[:60]}"
-    body = f"Tool: {tool_desc}"
-
-    title = "✅ Cowork Pilot — ALLOW"
-
-    script = (
-        f'display notification "{_escape_for_applescript(body)}" '
-        f'with title "{_escape_for_applescript(title)}" '
-        f'sound name "Glass"'
-    )
+    # TTS readout via macOS `say`
+    tts_text = f"에스컬레이트. {body}"
     try:
-        _sp.run(["osascript", "-e", script], capture_output=True, timeout=5)
-    except (OSError, _sp.TimeoutExpired):
+        _sp.Popen(["say", tts_text])  # non-blocking
+    except (OSError, ValueError):
         pass
 
-    print(f"\a✅  ALLOW (please approve): {body}", file=sys.stderr)
 
 
 def _escape_for_applescript(text: str) -> str:
@@ -149,16 +128,9 @@ def process_one_event(
         _notify_escalate(event)
         return False  # Don't input anything, leave for human
 
-    # 2.6 Handle permission allow — notify human (auto-Enter unreliable for native dialogs)
-    if validated.action == "allow" and event.event_type == EventType.PERMISSION:
-        logger.info(
-            "validator",
-            "ALLOW — notifying human to approve",
-            event_type=event.event_type.value,
-            tool_name=event.tool_name,
-        )
-        _notify_allow(event)
-        return False  # Let human click the allow button
+    # 2.6 Permission allow — auto-press Enter via AppleScript
+    #     Cowork permission dialogs are in-app UI (not native macOS dialogs),
+    #     so keystroke Enter works reliably.
 
     # 3. Build and execute AppleScript
     script = build_applescript(
@@ -175,6 +147,20 @@ def process_one_event(
             logger.error("responder", "Failed to set clipboard via pbcopy")
             return False
 
+    # ── Just-in-time guard ──────────────────────────────────────────
+    # Between the debounce timeout and now (dispatcher + validation took
+    # time), Cowork may have auto-approved the tool and the tool may have
+    # already finished.  Re-read JSONL to check for a matching tool_result.
+    # If found, skip AppleScript entirely — there is no dialog to click.
+    if has_tool_result_arrived(jsonl_path, event.tool_use_id):
+        logger.info(
+            "responder",
+            "tool_result already in JSONL — skipping AppleScript (auto-approved tool)",
+            tool_use_id=event.tool_use_id,
+            tool_name=event.tool_name,
+        )
+        return True  # Treat as success — tool ran fine without our intervention
+
     # Capture file size BEFORE AppleScript runs so post-verify doesn't
     # miss a tool_result that arrives between osascript and the poll start.
     pre_exec_size = jsonl_path.stat().st_size if jsonl_path.exists() else 0
@@ -184,7 +170,17 @@ def process_one_event(
         logger.error("responder", "AppleScript execution failed")
         return False
 
-    # 4. Post-verify
+    # 4. Post-verify (skip for permissions — tool_result appears only after
+    #    the tool finishes executing, which can take minutes for builds etc.)
+    if event.event_type == EventType.PERMISSION:
+        logger.info(
+            "responder",
+            "Permission Enter sent, skipping post-verify (tool execution may take a while)",
+            tool_use_id=event.tool_use_id,
+            action=validated.action,
+        )
+        return True
+
     verified = post_verify_response(
         jsonl_path,
         event.tool_use_id,
@@ -302,6 +298,164 @@ def run(config: Config) -> None:
         time.sleep(config.poll_interval_seconds)
 
 
+def run_harness(config: Config, harness_config: HarnessConfig) -> None:
+    """Harness mode: execute an exec-plan Chunk by Chunk.
+
+    Combines Phase 1 auto-response with Phase 2 Chunk orchestration
+    in a single cooperative loop.
+    """
+    from cowork_pilot.plan_parser import parse_exec_plan
+    from cowork_pilot.session_manager import (
+        ChunkRetryState,
+        find_next_incomplete_chunk,
+        move_to_completed,
+        notify_escalate,
+        open_chunk_session,
+        process_chunk,
+    )
+    from cowork_pilot.completion_detector import is_idle_trigger
+    from cowork_pilot.watcher import parse_jsonl_line
+
+    logger = StructuredLogger(config.log_path, config.log_level)
+    logger.info("main", "Cowork Pilot starting in HARNESS mode", engine=config.engine)
+
+    base_path = Path(config.session_base_path).expanduser()
+    project_dir = config.project_dir
+
+    # Find active exec-plan
+    active_dir = Path(project_dir) / harness_config.exec_plans_dir / "active"
+    plan_files = list(active_dir.glob("*.md"))
+    if not plan_files:
+        logger.error("harness", "No active exec-plan found", dir=str(active_dir))
+        print(f"Error: No exec-plan files in {active_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    plan_path = plan_files[0]  # Use first active plan
+    logger.info("harness", "Loading exec-plan", path=str(plan_path))
+    print(f"Harness: Loading {plan_path}")
+
+    try:
+        plan = parse_exec_plan(plan_path)
+    except (ValueError, OSError) as e:
+        notify_escalate(f"exec-plan parse error: {e}")
+        sys.exit(1)
+
+    # Main harness loop: process chunks one by one
+    while True:
+        plan = parse_exec_plan(plan_path)
+        chunk = find_next_incomplete_chunk(plan)
+
+        if chunk is None:
+            # All chunks completed
+            completed_path = move_to_completed(plan_path)
+            logger.info("harness", "All chunks completed", dest=str(completed_path))
+            notify_escalate("구현 계획 실행 완료!")
+            print(f"Harness: All chunks completed! Plan moved to {completed_path}")
+            break
+
+        logger.info("harness", f"Starting Chunk {chunk.number}: {chunk.name}")
+        print(f"\nHarness: Starting Chunk {chunk.number}: {chunk.name}")
+
+        # Open a new Cowork session
+        new_jsonl = open_chunk_session(chunk, harness_config, base_path)
+        if new_jsonl is None:
+            notify_escalate(f"Chunk {chunk.number} 세션 열기 실패")
+            logger.error("harness", "Failed to open session", chunk=chunk.number)
+            break
+
+        logger.info("harness", "Session opened", jsonl=str(new_jsonl))
+        print(f"  Session JSONL: {new_jsonl}")
+
+        # Set up Phase 1 watcher for the new session
+        tail = JSONLTail(new_jsonl)
+        sm = WatcherStateMachine(debounce_seconds=config.debounce_seconds)
+
+        # Harness state
+        retry_state = ChunkRetryState()
+        last_record: dict | None = None
+        last_record_time = time.monotonic()
+        harness_feedback_pending = False
+
+        # Cooperative loop: Phase 1 + harness idle detection
+        chunk_done = False
+        while not chunk_done:
+            now = time.monotonic()
+
+            # ── Phase 1: event detection + auto-response ──
+            if not harness_feedback_pending:
+                # Check for session switch (shouldn't happen in harness, but safe)
+                new_lines = tail.read_new_lines()
+                if new_lines:
+                    last_record_time = time.monotonic()
+
+                for line in new_lines:
+                    parsed = parse_jsonl_line(line)
+                    if parsed is None:
+                        continue
+                    last_record = parsed  # Track for idle detection
+
+                    if parsed["type"] == "assistant":
+                        for tu in parsed["tool_uses"]:
+                            sm.on_tool_use(tu)
+                    elif parsed["type"] == "user":
+                        for tr_id in parsed["tool_results"]:
+                            sm.on_tool_result(tr_id)
+
+                sm.tick()
+
+                event = sm.get_pending_event()
+                if event is not None:
+                    from cowork_pilot.dispatcher import extract_context
+                    context = extract_context(new_jsonl, max_lines=10)
+                    event = Event(
+                        event_type=event.event_type,
+                        tool_use_id=event.tool_use_id,
+                        tool_name=event.tool_name,
+                        questions=event.questions,
+                        tool_input=event.tool_input,
+                        context_lines=context,
+                    )
+
+                    success = process_one_event(event, new_jsonl, config, logger)
+                    if success:
+                        sm.on_tool_result(event.tool_use_id)
+                    else:
+                        sm.state = WatcherState.IDLE
+                        sm.pending_tool_use = None
+
+            # ── Phase 2: idle detection + completion check ──
+            if is_idle_trigger(last_record, last_record_time, now,
+                              idle_timeout_seconds=harness_config.idle_timeout_seconds):
+                logger.info("harness", "Idle detected, running verification",
+                           chunk=chunk.number)
+                print(f"  Idle detected — verifying Chunk {chunk.number}...")
+
+                harness_feedback_pending = True
+
+                result = process_chunk(
+                    plan_path, chunk, harness_config, project_dir, retry_state,
+                )
+
+                if result == "COMPLETED":
+                    logger.info("harness", f"Chunk {chunk.number} completed")
+                    print(f"  ✓ Chunk {chunk.number} completed!")
+                    chunk_done = True
+                elif result == "ESCALATE":
+                    notify_escalate(f"Chunk {chunk.number} ESCALATE — 재시도 초과")
+                    logger.error("harness", "ESCALATE", chunk=chunk.number)
+                    print(f"  ⚠ Chunk {chunk.number} ESCALATE — pausing")
+                    chunk_done = True  # Stop this chunk, human intervention needed
+                else:
+                    # INCOMPLETE or ERROR — feedback sent, continue watching
+                    last_record_time = time.monotonic()  # Reset idle timer
+                    logger.info("harness", f"Chunk {chunk.number}: {result}, continuing")
+                    print(f"  → {result}, continuing to watch...")
+
+                harness_feedback_pending = False
+
+            time.sleep(config.poll_interval_seconds)
+
+
 def cli() -> None:
     """Entry point for `cowork-pilot` command."""
     import argparse
@@ -309,13 +463,19 @@ def cli() -> None:
     parser = argparse.ArgumentParser(description="Cowork Pilot — auto-response agent")
     parser.add_argument("--config", type=str, default="config.toml", help="Path to config file")
     parser.add_argument("--engine", type=str, choices=["codex", "claude"], help="Override engine")
+    parser.add_argument("--mode", type=str, choices=["watch", "harness"], default="watch",
+                       help="Run mode: watch (Phase 1 auto-response) or harness (exec-plan orchestration)")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     if args.engine:
         config.engine = args.engine
 
-    run(config)
+    if args.mode == "harness":
+        harness_config = load_harness_config(Path(args.config), config)
+        run_harness(config, harness_config)
+    else:
+        run(config)
 
 
 if __name__ == "__main__":
