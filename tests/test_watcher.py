@@ -201,3 +201,35 @@ def test_jsonl_tail_switch_file(tmp_path):
     tail.switch_file(path2)
     lines = tail.read_new_lines()
     assert lines == []  # skips existing
+
+
+class TestIgnoredSessions:
+    """ignored_sessions 파라미터 테스트."""
+
+    def test_ignored_session_skips_events(self):
+        sm = WatcherStateMachine(debounce_seconds=0.0, ignored_sessions={Path("/fake/session.jsonl")})
+        sm.set_current_session(Path("/fake/session.jsonl"))
+        sm.on_tool_use({"id": "tu_1", "name": "AskUserQuestion", "input": {}})
+        assert sm.state == WatcherState.IDLE  # 이벤트 무시됨
+
+    def test_non_ignored_session_processes_events(self):
+        sm = WatcherStateMachine(debounce_seconds=0.0, ignored_sessions={Path("/fake/other.jsonl")})
+        sm.set_current_session(Path("/fake/session.jsonl"))
+        sm.on_tool_use({"id": "tu_1", "name": "AskUserQuestion", "input": {}})
+        assert sm.state == WatcherState.TOOL_USE_DETECTED
+
+    def test_add_remove_ignored(self):
+        ignored = set()
+        sm = WatcherStateMachine(debounce_seconds=0.0, ignored_sessions=ignored)
+        sm.set_current_session(Path("/fake/session.jsonl"))
+
+        # Initially not ignored
+        sm.on_tool_use({"id": "tu_1", "name": "AskUserQuestion", "input": {}})
+        assert sm.state == WatcherState.TOOL_USE_DETECTED
+
+        # Reset and add to ignored
+        sm.state = WatcherState.IDLE
+        sm.pending_tool_use = None
+        ignored.add(Path("/fake/session.jsonl"))
+        sm.on_tool_use({"id": "tu_2", "name": "AskUserQuestion", "input": {}})
+        assert sm.state == WatcherState.IDLE

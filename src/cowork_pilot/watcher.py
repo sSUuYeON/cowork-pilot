@@ -87,11 +87,17 @@ class WatcherStateMachine:
     States: IDLE → TOOL_USE_DETECTED → DEBOUNCE_WAIT → PENDING_RESPONSE → RESPONDED → IDLE
     """
 
-    def __init__(self, debounce_seconds: float = 2.0):
+    def __init__(self, debounce_seconds: float = 2.0, ignored_sessions: set[Path] | None = None):
         self.state = WatcherState.IDLE
         self.debounce_seconds = debounce_seconds
         self.pending_tool_use: dict | None = None
         self._detected_at: float = 0.0
+        self.ignored_sessions: set[Path] = ignored_sessions if ignored_sessions is not None else set()
+        self._current_session: Path | None = None
+
+    def set_current_session(self, path: Path) -> None:
+        """Set the current session JSONL path for ignored_sessions check."""
+        self._current_session = path
 
     def on_tool_use(self, tool_use: dict) -> None:
         """Called when a new tool_use block is parsed from JSONL.
@@ -100,6 +106,9 @@ class WatcherStateMachine:
         auto-approves them inside the VM sandbox, so no permission
         dialog will ever appear for them.
         """
+        # Check if current session is ignored
+        if self._current_session and self._current_session in self.ignored_sessions:
+            return
         if tool_use["name"] not in DIALOG_TOOLS:
             return  # auto-approved tool, no dialog to handle
         self.pending_tool_use = tool_use

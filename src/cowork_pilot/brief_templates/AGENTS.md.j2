@@ -1,0 +1,51 @@
+# {{ brief.name }}
+
+{{ brief.description }}
+
+## Directory Map
+
+- `src/` — {{ brief.language }} + {{ brief.framework }} 소스 코드
+- `docs/design-docs/` — 설계 문서 (index.md에서 색인)
+- `docs/product-specs/` — 페이지/기능별 스펙 (index.md에서 색인)
+- `docs/exec-plans/active/` — 현재 진행 중인 구현 계획
+- `tests/` — 테스트
+
+## When Making Changes
+
+1. AGENTS.md를 읽고 프로젝트 구조를 파악
+2. docs/design-docs/를 참고하여 설계 의도 확인
+3. 변경 후 테스트 실행
+4. 기존 패턴을 따를 것
+
+## Conventions
+
+- {{ brief.language }}, {{ brief.framework }}
+{% if brief.styling %}- {{ brief.styling }}
+{% endif %}{% if brief.database %}- Database: {{ brief.database }}
+{% endif %}{% if brief.package_manager %}- Package manager: {{ brief.package_manager }}
+{% endif %}
+
+## Writing Standards
+
+이 프로젝트의 모든 docs/ 파일은 다음 규칙을 따른다.
+
+### 형식 규칙
+- 테이블: GitHub Flavored Markdown 테이블 사용. 3컬럼 이하 권장
+- 리스트: 정의가 필요하면 `- **항목**: 설명` 형식. 나열만이면 `- 항목`
+- 코드: 인라인은 백틱, 블록은 언어 명시 코드 펜스
+- 다이어그램: ASCII art 또는 Mermaid. 5줄 이하면 ASCII, 그 이상이면 Mermaid
+
+### 분량 규칙
+- 각 섹션: 최소 3줄, 최대 30줄 (코드블록/테이블 제외)
+- 한 줄짜리 섹션 금지 — 최소한 "무엇을, 왜, 어떻게" 3가지를 다뤄야 함
+- 빈 섹션 금지 — 해당 없으면 "해당 없음 — (이유)" 한 줄 작성
+
+### 금지 사항
+- "추후 작성", "TBD", "TODO" 단독 사용 금지 — 대신 현재 알고 있는 것이라도 적을 것
+- 브리프 내용 그대로 복붙 금지 — 반드시 구체화/확장해서 작성
+- 주관적 표현 ("좋은", "적절한") 금지 — 측정 가능한 기준으로 대체
+
+### GUIDE 주석 처리
+- 각 파일의 `<!-- GUIDE: ... -->` 주석은 해당 섹션의 작성 가이드
+- 내용을 채운 후 반드시 GUIDE 주석 삭제
+- GUIDE 주석이 남아있으면 해당 섹션 미완료로 간주

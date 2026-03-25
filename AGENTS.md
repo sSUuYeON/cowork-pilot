@@ -8,9 +8,14 @@ Auto-response agent for Cowork. Watches JSONL, judges questions via CLI agents, 
 - `docs/decision-criteria.md` — 도구별/질문 유형별 판단 기준 (실데이터 기반, 180줄)
 - `docs/golden-rules.md` — 절대 규칙, ESCALATE 블랙리스트, 거부 목록 (실데이터 기반, 150줄)
 - `docs/specs/` — Design specs
-- `docs/exec-plans/active/` — 현재 진행 중인 실행 계획
+- `docs/exec-plans/planning/` — 대기 중인 구현 계획 (번호순 자동 승격)
+- `docs/exec-plans/active/` — 현재 진행 중인 실행 계획 (최대 1개)
 - `tests/` — pytest tests with JSONL fixtures
 - `config.toml` — Runtime configuration
+- `src/cowork_pilot/brief_parser.py` — 브리프 MD 파싱
+- `src/cowork_pilot/scaffolder.py` — 프로젝트 디렉토리 + 템플릿 스캐폴딩
+- `src/cowork_pilot/meta_runner.py` — Phase 3 메타 에이전트 오케스트레이션
+- `src/cowork_pilot/brief_templates/` — Jinja2 프로젝트 템플릿 (9개 .j2 파일)
 
 ## When Making Changes
 
@@ -34,7 +39,8 @@ Auto-response agent for Cowork. Watches JSONL, judges questions via CLI agents, 
 
 ## Harness (자동 실행 시스템)
 
-- `docs/exec-plans/active/` — 현재 진행 중인 구현 계획
+- `docs/exec-plans/planning/` — 대기 중인 구현 계획 (번호순 자동 승격)
+- `docs/exec-plans/active/` — 현재 진행 중인 구현 계획 (최대 1개)
 - `docs/exec-plans/completed/` — 완료된 구현 계획
 - exec-plan 포맷: Chunk별 Tasks + Completion Criteria + Session Prompt
 - Chunk 완료 시 체크박스 `[x]`로 업데이트됨

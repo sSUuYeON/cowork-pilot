@@ -17,8 +17,10 @@
     specs/                      ← 개발 기획서 (설계 문서)
       {날짜}-{이름}.md           ← 예: 2026-03-24-auth-system-design.md
     exec-plans/
-      active/                   ← 현재 진행 중인 구현 계획
-        {이름}.md               ← 예: auth-system.md
+      planning/                 ← 대기 중인 구현 계획 (번호순 실행)
+        {NN}-{이름}.md           ← 예: 02-frontend.md, 03-backend.md
+      active/                   ← 현재 진행 중인 구현 계획 (최대 1개)
+        {NN}-{이름}.md           ← 예: 01-docs-setup.md
       completed/                ← 완료된 구현 계획 (하네스가 자동 이동)
     golden-rules.md             ← (선택) 프로젝트별 절대 규칙
     decision-criteria.md        ← (선택) 프로젝트별 판단 기준
@@ -33,7 +35,8 @@
 |------|-----------|------|
 | `AGENTS.md` | **필수** | 없으면 Cowork 세션이 맥락을 잡을 수 없음 |
 | `docs/specs/` | **필수** | 최소 1개의 설계 문서가 있어야 함 |
-| `docs/exec-plans/active/` | **필수** | 하네스가 읽는 실행 계획 위치 |
+| `docs/exec-plans/planning/` | 선택 | 대기 중인 구현 계획 (번호순 자동 승격) |
+| `docs/exec-plans/active/` | **필수** | 하네스가 읽는 실행 계획 위치 (최대 1개) |
 | `docs/exec-plans/completed/` | 자동 생성 | 하네스가 완료 시 자동 이동 |
 | `docs/golden-rules.md` | 선택 | Phase 1 자동응답에서 참조 |
 | `docs/decision-criteria.md` | 선택 | Phase 1 자동응답에서 참조 |
@@ -343,101 +346,118 @@ docs/exec-plans/active/{실행계획}.md
 4. 소스 코드/테스트 — 작업에 필요한 파일들
 
 
-## 7. Phase 3: 기획서 → exec-plan 자동 생성 워크플로우
+## 7. Phase 3: 메타 에이전트 docs/ 구조 표준
 
-Phase 3는 "프로젝트 설명"만 받아서 기획서 작성 → 리뷰 → 승인 → exec-plan 생성까지 자동으로 처리하는 메타 워크플로우다.
+Phase 3 메타 에이전트는 "프로젝트 브리프"를 기반으로 docs/ 구조를 자동 생성하고, Phase 2 하네스로 내용 채우기 + 구현까지 자동 실행한다.
 
 ### 7.1 전체 흐름
 
 ```
-입력: 프로젝트 설명 (사람이 제공)
+입력: 프로젝트 설명 (사용자가 제공)
   ↓
-[Step 1] 기획서 작성 세션
-  → Cowork 세션이 docs/specs/에 기획서 생성
-  → 완료 조건: 기획서 파일 존재 + 품질 검증 통과
+[Step 0] 브리프 채우기 (Cowork 세션, 사용자 직접 응답, Phase 1 OFF)
+  → AskUserQuestion으로 항목별 질문
+  → 완료: docs/project-brief.md 생성
   ↓
-[Step 2] 기획서 리뷰 세션 (최대 2회)
-  → CLI 에이전트가 품질 검증
-  → PASS → Step 3으로
-  → FAIL → 수정 피드백 전송 → 재검증 (최대 2회)
-  → 2회 후에도 FAIL → 승인 모드에 따라 분기
+[Step 1] 스캐폴딩 (Python 코드, 결정적, 에이전트 없음)
+  → 브리프 파싱 → 디렉토리 + 빈 템플릿 + exec-plan 자동 생성
   ↓
-[Step 3] 기획서 승인
-  → auto 모드: 리뷰 통과 시 자동 승인
-  → manual 모드: macOS 알림 → 사람이 확인 후 승인
+[Step 2] 내용 채우기 (Phase 2 하네스, Phase 1 ON)
+  → docs-setup.md exec-plan 실행
+  → 빈 템플릿의 GUIDE 주석을 따라 내용 채움
   ↓
-[Step 4] exec-plan 생성 세션
-  → Cowork 세션이 승인된 기획서를 기반으로 exec-plan 생성
-  → 완료 조건: exec-plan 파일 존재 + 형식 검증 통과
+[Step 3] 검증 + 승인
+  → auto 모드: 즉시 진행
+  → manual 모드: macOS 알림 → 사용자 확인
   ↓
-[Step 5] Phase 2 실행 모드 시작
-  → exec-plans/active/에 파일이 있으므로 자동 실행
+[Step 4] 구현 시작 (Phase 2 하네스, Phase 1 ON)
+  → planning/에서 다음 exec-plan을 active/로 승격 후 실행
+  → 여러 exec-plan을 번호순으로 자동 실행
 ```
 
-### 7.2 승인 모드
+### 7.2 생성되는 docs/ 구조
+
+스캐폴더가 브리프를 기반으로 결정적으로 생성하는 구조:
+
+```
+프로젝트-루트/
+  AGENTS.md                          ← 목차 (~100줄), 브리프 기반 초안
+  ARCHITECTURE.md                    ← 빈 템플릿 (에이전트가 내용 채움)
+
+  docs/
+    project-brief.md                 ← 채워진 브리프 원본 보존
+    design-docs/
+      index.md                       ← 설계 문서 색인 (빈 템플릿)
+      core-beliefs.md                ← 에이전트 운영 원칙 (빈 템플릿)
+      data-model.md                  ← 엔티티/관계/스키마 (빈 템플릿)
+      {도메인}.md                     ← 브리프 내용에 따라 동적 생성 (auth.md 등)
+
+    product-specs/
+      index.md                       ← 제품 스펙 색인 (빈 템플릿)
+      {페이지이름}.md                  ← 브리프 Pages/Features에서 1:1 생성
+
+    exec-plans/
+      planning/                      ← Step 2 Chunk 4에서 구현 계획 자동 생성
+      active/                        ← Step 1에서 01-docs-setup.md 자동 생성
+      completed/
+
+    references/                      ← 비어있음 (필요 시 추가)
+    generated/                       ← 비어있음 (구현 후 자동 추출)
+
+    DESIGN_GUIDE.md                  ← 빈 템플릿 (디자인 시스템/가이드라인)
+    QUALITY_SCORE.md                 ← 빈 템플릿 (도메인별 품질 등급)
+    SECURITY.md                      ← 빈 템플릿 (보안 설계)
+
+  src/                               ← 빈 디렉토리
+  tests/                             ← 빈 디렉토리
+  config.toml                        ← cowork-pilot 설정
+```
+
+### 7.3 동적 생성 규칙
+
+| 브리프 항목 | 생성되는 파일 |
+|------------|-------------|
+| Pages/Features 각 항목 | `docs/product-specs/{페이지이름}.md` |
+| Data Model의 엔티티들 | `docs/design-docs/data-model.md`에 섹션으로 포함 |
+| auth 제약이 있으면 | `docs/design-docs/auth.md` 추가 |
+| deployment 제약이 있으면 | `docs/design-docs/deployment.md` 추가 |
+
+### 7.4 빈 템플릿과 GUIDE 주석
+
+각 빈 템플릿 파일은 섹션 헤더와 `<!-- GUIDE: ... -->` HTML 주석을 포함. 에이전트가 내용을 채운 후 반드시 GUIDE 주석을 삭제한다. 검증 시 `grep -r "<!-- GUIDE:" docs/` 결과가 0건이어야 완료.
+
+GUIDE 주석 형식:
+```markdown
+## 1. 섹션 제목
+<!-- GUIDE:
+- 내용: 이 섹션에서 다뤄야 할 내용
+- 형식: 산문/리스트/테이블/다이어그램 중 권장 형식
+- 분량: 최소~최대 줄 수
+- 참조: 참고할 다른 문서
+-->
+```
+
+### 7.5 승인 모드
 
 `config.toml`에서 설정:
 
 ```toml
-[harness.phase3]
+[meta]
 approval_mode = "manual"    # "manual" | "auto"
-max_review_cycles = 2       # 리뷰 최대 반복 횟수
 ```
 
 | 모드 | 동작 |
 |------|------|
-| `manual` (기본) | 리뷰 통과 후 macOS 알림 → 사람이 기획서를 확인하고 승인 파일을 생성(`docs/specs/{파일}.approved`) → 하네스가 감지 후 다음 단계 진행 |
-| `auto` | 리뷰 통과 즉시 다음 단계 진행. 2회 리뷰 후에도 실패하면 ESCALATE |
+| `manual` (기본) | Step 3에서 macOS 알림 → 사용자가 확인 후 `docs/.meta-approved` 파일 생성 → 하네스 진행 |
+| `auto` | Step 3 즉시 통과 → Step 4 자동 시작 |
 
-manual 모드에서 사람이 기획서를 수정할 수도 있다 — 수정 후 `.approved` 파일 생성하면 하네스가 수정된 버전으로 진행.
+### 7.6 Phase 1 자동응답 제어
 
-### 7.3 기획서 품질 검증 기준
+`--mode meta`로 실행 시:
+- Step 0 (브리프 채우기): Phase 1 자동응답 **OFF** — 사용자 의도를 담아야 하므로
+- Step 2~4 (내용 채우기 + 구현): Phase 1 자동응답 **ON** — 에이전트가 자동 진행
 
-CLI 에이전트가 기획서를 리뷰할 때 확인하는 항목:
-
-**구조 검증 (자동, 기계적):**
-- 필수 섹션이 모두 존재하는가 (섹션 3.2 기준: 목표, 아키텍처, 기술적 세부사항, 에러 처리, 미결정 사항)
-- 상태 필드가 있는가 (`상태: Draft | Review | Approved | Implemented`)
-- 미결정 사항이 0개인가 (모든 `- [ ]`가 해결되었는가)
-
-**내용 검증 (CLI 에이전트 판단):**
-- 목표가 구체적이고 측정 가능한가 ("잘 만들자" 수준이 아닌가)
-- 아키텍처 섹션에 컴포넌트 간 관계가 명시되어 있는가 (다이어그램 또는 텍스트)
-- 기술적 세부사항에 인터페이스/데이터 모델이 정의되어 있는가
-- 에러 처리 섹션이 비어있지 않은가
-- exec-plan으로 변환했을 때 Completion Criteria를 기계적으로 도출할 수 있는 수준의 구체성이 있는가
-
-**CLI 리뷰 프롬프트 템플릿:**
-```
-다음 기획서를 리뷰해:
-파일: {spec_path}
-컨벤션: docs/project-conventions.md의 섹션 3 참조
-
-검증 항목:
-1. 필수 섹션(목표, 아키텍처, 기술적 세부사항, 에러 처리, 미결정 사항) 존재 여부
-2. 미결정 사항이 모두 해결되었는가 (체크박스 전부 [x])
-3. 각 섹션의 내용이 exec-plan의 Completion Criteria로 변환 가능한 수준의 구체성을 갖추었는가
-4. 목표가 구체적이고 측정 가능한가
-5. 아키텍처에 컴포넌트 관계가 명시되어 있는가
-
-모든 항목 통과 → "APPROVED"
-미통과 항목 있음 → "NEEDS_REVISION: {구체적 수정 사항}"
-```
-
-### 7.4 exec-plan 형식 검증
-
-exec-plan 생성 세션이 끝난 후, 하네스가 직접 파싱을 시도하여 형식을 검증한다:
-- `plan_parser.py`로 파싱 성공 → 형식 OK
-- 파싱 실패 → 세션에 "exec-plan 형식이 잘못됨: {에러}" 피드백 전송 (최대 2회)
-- 2회 후에도 실패 → ESCALATE
-
-### 7.5 자동 생성 시 형식 준수
-
-자동 생성 프롬프트에는 반드시 이 문서(`docs/project-conventions.md`)의 경로를 포함시켜 형식을 준수하게 한다:
-
-- 기획서 생성 → 섹션 3의 형식을 따름
-- exec-plan 생성 → 섹션 4의 형식을 **정확히** 따름 (파서 의존)
-- AGENTS.md 생성/업데이트 → 섹션 2의 형식을 따름
+구현 방식: 메타 에이전트가 브리프 세션의 JSONL 경로를 `ignored_sessions: set[Path]`에 등록. Watcher가 해당 경로의 이벤트를 무시.
 
 ---
 

@@ -1,0 +1,138 @@
+# docs/ 구조 내용 채우기
+
+## Metadata
+- project_dir: {{ project_dir }}
+- spec: docs/project-brief.md
+- created: {{ today }}
+- status: pending
+
+---
+
+## Chunk 1: 아키텍처 기반 문서
+
+### Completion Criteria
+- [ ] ARCHITECTURE.md 파일이 비어있지 않음
+- [ ] docs/design-docs/core-beliefs.md 파일이 비어있지 않음
+- [ ] docs/design-docs/data-model.md 파일이 비어있지 않음
+
+### Tasks
+- Task 1: project-brief.md를 읽고 ARCHITECTURE.md 작성
+- Task 2: core-beliefs.md 작성 (에이전트 운영 원칙, 기술 철학)
+- Task 3: data-model.md 작성 (엔티티, 관계, 스키마 초안)
+
+### Session Prompt
+```
+docs/project-brief.md를 읽고, ARCHITECTURE.md와 docs/design-docs/의
+core-beliefs.md, data-model.md를 작성해.
+AGENTS.md를 먼저 읽어서 Writing Standards와 프로젝트 구조를 파악하고,
+각 파일의 <!-- GUIDE: ... --> 주석을 따라 내용을 채워.
+내용을 채운 후 GUIDE 주석은 반드시 삭제해.
+완료 조건을 모두 만족시켜.
+```
+
+---
+
+## Chunk 2: 도메인별 설계 문서
+
+### Completion Criteria
+- [ ] docs/design-docs/ 아래 모든 .md 파일이 비어있지 않음
+- [ ] docs/design-docs/index.md에 모든 문서가 색인됨
+
+### Tasks
+- Task 1: 브리프의 제약/결정에 따라 도메인별 설계 문서 작성
+- Task 2: index.md 업데이트
+
+### Session Prompt
+```
+docs/exec-plans/active/01-docs-setup.md를 읽고 Chunk 2를 진행해.
+AGENTS.md의 Writing Standards를 먼저 읽고,
+docs/project-brief.md와 ARCHITECTURE.md를 참고해서
+docs/design-docs/ 아래 빈 파일들의 <!-- GUIDE: --> 주석을 따라 내용을 채워.
+내용을 채운 후 GUIDE 주석은 반드시 삭제해.
+index.md도 업데이트해.
+완료 조건을 모두 만족시켜.
+```
+
+---
+
+## Chunk 3: 페이지/기능별 스펙
+
+### Completion Criteria
+- [ ] docs/product-specs/ 아래 모든 .md 파일이 비어있지 않음
+- [ ] docs/product-specs/index.md에 모든 스펙이 색인됨
+
+### Tasks
+- Task 1: 각 페이지/기능별 스펙 작성
+- Task 2: index.md 업데이트
+
+### Session Prompt
+```
+docs/exec-plans/active/01-docs-setup.md를 읽고 Chunk 3를 진행해.
+AGENTS.md의 Writing Standards를 먼저 읽고,
+docs/project-brief.md, ARCHITECTURE.md, docs/design-docs/를 참고해서
+docs/product-specs/ 아래 빈 파일들의 <!-- GUIDE: --> 주석을 따라 내용을 채워.
+내용을 채운 후 GUIDE 주석은 반드시 삭제해.
+index.md도 업데이트해.
+완료 조건을 모두 만족시켜.
+```
+
+---
+
+## Chunk 4: 구현 계획 (exec-plan) 생성
+
+### Completion Criteria
+- [ ] docs/exec-plans/planning/ 아래에 최소 1개 .md 파일 존재
+- [ ] 모든 파일이 plan_parser.py로 파싱 성공 (형식 검증)
+- [ ] 파일명이 {NN}-{이름}.md 형식 (예: 02-frontend.md, 03-backend.md)
+
+### Tasks
+- Task 1: 설계 문서 + 스펙을 기반으로 구현 exec-plan 작성
+- Task 2: 프로젝트 규모에 따라 하나 또는 여러 파일로 분리
+- Task 3: Chunk은 2~5개 Task, 2~5개 Completion Criteria로 구성
+
+### Session Prompt
+```
+docs/exec-plans/active/01-docs-setup.md를 읽고 Chunk 4를 진행해.
+ARCHITECTURE.md, docs/design-docs/, docs/product-specs/를 전부 읽고
+이 프로젝트의 구현 계획(exec-plan)을 작성해.
+docs/project-conventions.md 섹션 4의 형식을 정확히 따라.
+
+파일 위치: docs/exec-plans/planning/
+파일명 규칙: {NN}-{이름}.md (02부터 시작. 예: 02-frontend.md, 03-backend.md)
+프로젝트 규모에 따라 하나로 합쳐도 되고 여러 파일로 분리해도 된다.
+단, 파일명의 번호 순서가 실행 순서가 된다.
+
+exec-plan 형식:
+- # 제목 + ## Metadata (project_dir, spec, created, status)
+- ## Chunk N: 이름 + ### Completion Criteria (- [ ] 체크박스) + ### Tasks (- Task N:) + ### Session Prompt (코드블록)
+- Chunk당 Task 2~5개, Completion Criteria 2~5개
+완료 조건을 모두 만족시켜.
+```
+
+---
+
+## Chunk 5: 크로스 링크 검증
+
+### Completion Criteria
+- [ ] AGENTS.md의 Directory Map이 실제 파일 구조와 일치
+- [ ] docs/design-docs/index.md의 목록이 실제 파일과 일치
+- [ ] docs/product-specs/index.md의 목록이 실제 파일과 일치
+- [ ] QUALITY_SCORE.md 초기화됨
+- [ ] grep -r "<!-- GUIDE:" docs/ 결과가 0건 (모든 GUIDE 주석 삭제됨)
+
+### Tasks
+- Task 1: AGENTS.md 최종 업데이트
+- Task 2: index.md 파일들 검증 및 수정
+- Task 3: QUALITY_SCORE.md에 각 도메인/레이어 초기 등급 설정
+- Task 4: GUIDE 주석 잔존 검증 — 남아있으면 해당 파일 내용 보완 후 삭제
+
+### Session Prompt
+```
+docs/exec-plans/active/01-docs-setup.md를 읽고 Chunk 5를 진행해.
+프로젝트 전체 파일 구조를 확인하고:
+1. AGENTS.md의 Directory Map이 실제와 맞는지 검증, 불일치 시 수정
+2. design-docs/index.md, product-specs/index.md가 실제 파일과 일치하는지 검증
+3. QUALITY_SCORE.md에 각 도메인/레이어 초기 등급 설정
+4. grep -r "<!-- GUIDE:" docs/ 실행 → 결과 0건이어야 함. 남아있으면 해당 파일 내용 보완 후 GUIDE 주석 삭제
+완료 조건을 모두 만족시켜.
+```

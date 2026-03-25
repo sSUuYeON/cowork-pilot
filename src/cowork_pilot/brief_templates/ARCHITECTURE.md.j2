@@ -1,0 +1,54 @@
+# {{ brief.name }} — Architecture
+
+> 아키텍처 개요
+> 작성일: {{ today }}
+> 상태: Draft
+
+---
+
+## 1. 시스템 개요
+<!-- GUIDE:
+- 내용: 이 프로젝트가 무엇이고 왜 존재하는지. 핵심 문제와 해결 방식
+- 형식: 산문 2~3 문단
+- 분량: 5~15줄
+- 참조: project-brief.md §1 Overview
+-->
+
+## 2. 기술 스택
+<!-- GUIDE:
+- 내용: 언어, 프레임워크, DB, 인프라. 각각 선택 이유 포함
+- 형식: `- **항목**: 설명 (선택 이유)` 리스트
+- 분량: 항목당 1~2줄, 전체 5~15줄
+- 참조: project-brief.md §2 Tech Stack
+-->
+
+- Language: {{ brief.language }}
+- Framework: {{ brief.framework }}
+{% if brief.database %}- Database: {{ brief.database }}{% endif %}
+{% if brief.styling %}- Styling: {{ brief.styling }}{% endif %}
+
+## 3. 핵심 설계 결정
+<!-- GUIDE:
+- 내용: 아키텍처 레벨 결정. 각각 결정/근거/버린 대안 포함
+- 형식: 결정당 3줄 구조: `**결정**: / **근거**: / **대안(버림)**:`
+- 분량: 최소 2개, 최대 7개
+- 참조: project-brief.md §5 Architecture Decisions
+-->
+
+{% if brief.decisions %}{% for d in brief.decisions %}- {{ d.decision }}
+  - 근거: {{ d.rationale }}
+{% endfor %}{% endif %}
+
+## 4. 디렉토리 구조
+<!-- GUIDE:
+- 내용: src/ 아래 주요 디렉토리와 각각의 역할
+- 형식: 트리 구조 코드블록 + 각 항목 1줄 설명
+- 분량: 10~25줄
+-->
+
+## 5. 데이터 흐름
+<!-- GUIDE:
+- 내용: 핵심 사용자 시나리오 1~2개의 요청→응답 흐름
+- 형식: Mermaid sequence diagram 또는 ASCII 화살표 (`A → B → C`)
+- 분량: 시나리오당 5~15줄
+-->

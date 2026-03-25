@@ -1,0 +1,11 @@
+# {{ section_name }} Index
+
+> 이 디렉토리의 문서 색인
+> 최종 업데이트: {{ today }}
+
+---
+
+{% for doc in documents %}- [`{{ doc.filename }}`]({{ doc.filename }}) — {{ doc.summary }}
+{% endfor %}
+{% if not documents %}(아직 문서가 없습니다)
+{% endif %}

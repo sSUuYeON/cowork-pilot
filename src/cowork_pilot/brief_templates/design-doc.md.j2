@@ -1,0 +1,15 @@
+# {{ title }}
+
+> {{ summary }}
+> 작성일: {{ today }}
+> 상태: Draft
+
+---
+
+{% for section in sections %}
+## {{ section.number }}. {{ section.title }}
+<!-- GUIDE:
+{{ section.guide }}
+-->
+
+{% endfor %}

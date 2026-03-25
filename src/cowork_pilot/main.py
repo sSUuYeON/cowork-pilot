@@ -299,11 +299,20 @@ def run(config: Config) -> None:
         time.sleep(config.poll_interval_seconds)
 
 
-def run_harness(config: Config, harness_config: HarnessConfig) -> None:
+def run_harness(
+    config: Config,
+    harness_config: HarnessConfig,
+    ignored_sessions: set[Path] | None = None,
+) -> None:
     """Harness mode: execute an exec-plan Chunk by Chunk.
 
     Combines Phase 1 auto-response with Phase 2 Chunk orchestration
     in a single cooperative loop.
+
+    Args:
+        ignored_sessions: Session JSONL paths for which Phase 1
+            auto-response should be suppressed (passed through to
+            WatcherStateMachine).
     """
     from cowork_pilot.plan_parser import parse_exec_plan
     from cowork_pilot.session_manager import (
@@ -323,15 +332,33 @@ def run_harness(config: Config, harness_config: HarnessConfig) -> None:
     base_path = Path(config.session_base_path).expanduser()
     project_dir = config.project_dir
 
-    # Find active exec-plan
+    # Find active exec-plan (promote from planning/ if active/ is empty)
     active_dir = Path(project_dir) / harness_config.exec_plans_dir / "active"
+    active_dir.mkdir(parents=True, exist_ok=True)
+
+    from cowork_pilot.session_manager import promote_next_plan
+    promoted = promote_next_plan(active_dir.parent)
+    if promoted:
+        logger.info("harness", "Promoted plan from planning/", plan=str(promoted))
+        print(f"Harness: Promoted {promoted.name} to active/")
+
     plan_files = list(active_dir.glob("*.md"))
     if not plan_files:
         logger.error("harness", "No active exec-plan found", dir=str(active_dir))
         print(f"Error: No exec-plan files in {active_dir}", file=sys.stderr)
         sys.exit(1)
+    if len(plan_files) > 1:
+        names = [f.name for f in plan_files]
+        logger.error("harness", "Multiple plans in active/ — ambiguous", files=names)
+        print(
+            f"Error: active/에 계획이 2개 이상입니다: {names}\n"
+            "active/에는 항상 1개의 exec-plan만 있어야 합니다.",
+            file=sys.stderr,
+        )
+        notify_escalate("active/에 계획이 2개 이상 — 수동 확인 필요")
+        sys.exit(1)
 
-    plan_path = plan_files[0]  # Use first active plan
+    plan_path = plan_files[0]
     logger.info("harness", "Loading exec-plan", path=str(plan_path))
     print(f"Harness: Loading {plan_path}")
 
@@ -369,7 +396,11 @@ def run_harness(config: Config, harness_config: HarnessConfig) -> None:
 
         # Set up Phase 1 watcher for the new session
         tail = JSONLTail(new_jsonl)
-        sm = WatcherStateMachine(debounce_seconds=config.debounce_seconds)
+        sm = WatcherStateMachine(
+            debounce_seconds=config.debounce_seconds,
+            ignored_sessions=ignored_sessions,
+        )
+        sm.set_current_session(new_jsonl)
 
         # Harness state
         retry_state = ChunkRetryState()
@@ -480,15 +511,26 @@ def cli() -> None:
     parser = argparse.ArgumentParser(description="Cowork Pilot — auto-response agent")
     parser.add_argument("--config", type=str, default="config.toml", help="Path to config file")
     parser.add_argument("--engine", type=str, choices=["codex", "claude"], help="Override engine")
-    parser.add_argument("--mode", type=str, choices=["watch", "harness"], default="watch",
-                       help="Run mode: watch (Phase 1 auto-response) or harness (exec-plan orchestration)")
+    parser.add_argument("--mode", type=str, choices=["watch", "harness", "meta"], default="watch",
+                       help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3)")
+    parser.add_argument("description", nargs="?", default="",
+                       help="Initial project description (meta mode only)")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     if args.engine:
         config.engine = args.engine
 
-    if args.mode == "harness":
+    if args.mode == "meta":
+        from cowork_pilot.config import load_meta_config
+        from cowork_pilot.meta_runner import run_meta
+        meta_config = load_meta_config(Path(args.config))
+        if args.description:
+            meta_config.initial_description = args.description
+        if not meta_config.project_dir:
+            meta_config.project_dir = config.project_dir
+        run_meta(config, meta_config)
+    elif args.mode == "harness":
         harness_config = load_harness_config(Path(args.config), config)
         run_harness(config, harness_config)
     else:

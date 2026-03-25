@@ -56,6 +56,36 @@ class HarnessConfig:
     engine_args: list[str] = field(default_factory=lambda: ["-p"])
 
 
+@dataclass
+class MetaConfig:
+    """Meta-agent configuration (loaded from config.toml [meta])."""
+    approval_mode: str = "auto"  # "manual" | "auto"
+    project_dir: str = ""
+    initial_description: str = ""  # CLI에서 전달받는 초기 설명
+    brief_template_dir: str = ""   # 기본값: 패키지 내 brief_templates/
+
+    def __post_init__(self):
+        if not self.brief_template_dir:
+            self.brief_template_dir = str(
+                Path(__file__).parent / "brief_templates"
+            )
+
+
+def load_meta_config(path: Path) -> MetaConfig:
+    """Load meta-agent config from config.toml's [meta] section."""
+    if not path.exists():
+        return MetaConfig()
+
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    m = data.get("meta", {})
+    return MetaConfig(
+        approval_mode=m.get("approval_mode", "manual"),
+        project_dir=m.get("project_dir", ""),
+    )
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         return Config()

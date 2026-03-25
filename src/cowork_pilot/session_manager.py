@@ -150,6 +150,33 @@ def move_to_completed(plan_path: Path) -> Path:
     return dest
 
 
+def promote_next_plan(exec_plans_dir: Path) -> Path | None:
+    """Move the next plan from planning/ to active/.
+
+    Selects by filename sort order (e.g. 01-xxx before 02-yyy).
+    Returns the new path in active/, or None if nothing to promote
+    or active/ already has a plan.
+    """
+    planning_dir = exec_plans_dir / "planning"
+    active_dir = exec_plans_dir / "active"
+
+    if not planning_dir.exists():
+        return None
+
+    # Don't promote if active/ already has a plan
+    if list(active_dir.glob("*.md")):
+        return None
+
+    candidates = sorted(planning_dir.glob("*.md"))
+    if not candidates:
+        return None
+
+    next_plan = candidates[0]
+    dest = active_dir / next_plan.name
+    shutil.move(str(next_plan), str(dest))
+    return dest
+
+
 # ── Retry counters ───────────────────────────────────────────────────
 
 @dataclass

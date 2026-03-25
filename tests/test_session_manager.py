@@ -335,3 +335,53 @@ class TestNotifyEscalate:
     def test_handles_oserror(self, mock_run):
         mock_run.side_effect = OSError("no osascript")
         notify_escalate("test message")  # should not raise
+
+
+class TestPromoteNextPlan:
+    """planning/ → active/ plan 이동."""
+
+    def test_promotes_first_by_filename_sort(self, tmp_path):
+        """파일명 정렬 순으로 첫 번째를 promote."""
+        planning = tmp_path / "docs" / "exec-plans" / "planning"
+        active = tmp_path / "docs" / "exec-plans" / "active"
+        planning.mkdir(parents=True)
+        active.mkdir(parents=True)
+        (planning / "02-implementation.md").write_text("# Plan 2")
+        (planning / "01-docs-setup.md").write_text("# Plan 1")
+
+        from cowork_pilot.session_manager import promote_next_plan
+        promoted = promote_next_plan(tmp_path / "docs" / "exec-plans")
+        assert promoted is not None
+        assert promoted.name == "01-docs-setup.md"
+        assert (active / "01-docs-setup.md").exists()
+        assert not (planning / "01-docs-setup.md").exists()
+
+    def test_returns_none_when_planning_empty(self, tmp_path):
+        """planning/이 비어있으면 None."""
+        planning = tmp_path / "docs" / "exec-plans" / "planning"
+        active = tmp_path / "docs" / "exec-plans" / "active"
+        planning.mkdir(parents=True)
+        active.mkdir(parents=True)
+
+        from cowork_pilot.session_manager import promote_next_plan
+        assert promote_next_plan(tmp_path / "docs" / "exec-plans") is None
+
+    def test_returns_none_when_active_not_empty(self, tmp_path):
+        """active/에 이미 plan이 있으면 promote하지 않음."""
+        planning = tmp_path / "docs" / "exec-plans" / "planning"
+        active = tmp_path / "docs" / "exec-plans" / "active"
+        planning.mkdir(parents=True)
+        active.mkdir(parents=True)
+        (planning / "02-implementation.md").write_text("# Plan 2")
+        (active / "01-docs-setup.md").write_text("# Plan 1")
+
+        from cowork_pilot.session_manager import promote_next_plan
+        assert promote_next_plan(tmp_path / "docs" / "exec-plans") is None
+
+    def test_planning_dir_missing(self, tmp_path):
+        """planning/ 디렉토리가 없으면 None."""
+        active = tmp_path / "docs" / "exec-plans" / "active"
+        active.mkdir(parents=True)
+
+        from cowork_pilot.session_manager import promote_next_plan
+        assert promote_next_plan(tmp_path / "docs" / "exec-plans") is None
