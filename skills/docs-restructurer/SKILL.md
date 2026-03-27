@@ -273,10 +273,17 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
 6. **Session Prompt에 Chunk 완료 워크플로 포함**: 각 Chunk의 Session Prompt 끝에 반드시 다음 지시를 포함한다:
    > "모든 Task 완료 후, `/engineering:code-review`로 코드 리뷰를 실행하고, 리뷰 통과 후 `/chunk-complete:chunk-complete`로 Completion Criteria 체크박스를 마킹해."
 
-7. **검증**: 생성된 exec-plan이 파서 규격에 맞는지 확인:
+7. **Session Prompt 파서 호환 규칙**: 파서는 Session Prompt를 "### Session Prompt" 아래 첫 번째 코드 블록(triple-backtick 쌍)으로 추출한다. 내부에 추가 코드 블록이 있으면 파서가 중간에서 블록이 끝났다고 판단하여 빈 프롬프트로 인식한다. 반드시 지킨다:
+   - **중첩 코드 블록 금지**: Session Prompt 안에 triple-backtick 코드 블록(bash, json, typescript 등)을 절대 넣지 않는다. 코드 예시가 필요하면 인라인 코드(backtick)나 4칸 들여쓰기로 대체한다.
+   - **Chunk 헤더 금지**: Session Prompt 안에 `## Chunk N:` 형태의 마크다운 헤더를 넣지 않는다. 파서가 이를 새로운 Chunk 경계로 오인한다.
+   - **코드보다 지시**: Session Prompt는 "무엇을 만들어라"를 지시하는 것이지, 완성 코드를 담는 곳이 아니다. 파일 경로, 함수명, 타입명은 인라인 코드로 언급하고, 구체적 구현은 참조 문서 경로를 안내한다.
+
+8. **검증**: 생성된 exec-plan이 파서 규격에 맞는지 확인:
    - Chunk 헤더: `^## Chunk (\d+): (.+)$`
    - Completion Criteria: `^- \[([ x])\] (.+)$`
    - Session Prompt가 비어있지 않음
+   - Session Prompt 코드 블록 안에 추가 triple-backtick이 없음 (중첩 코드 블록 검사)
+   - Session Prompt 안에 `## Chunk` 헤더가 없음 (중복 Chunk 헤더 검사)
    - 실패 시 자동 수정 후 재검증 (최대 3회)
 
 8. `docs/exec-plans/planning/`에 번호순으로 저장: `01-{이름}.md`, `02-{이름}.md`, ...
