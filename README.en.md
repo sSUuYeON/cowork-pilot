@@ -120,9 +120,9 @@ You can leave the terminal running and do other things. If a risky decision is n
 
 Cowork sessions opened by cowork-pilot use the following skills. All must be installed for proper operation.
 
-**This Repo's Plugin (Install via GitHub URL)**
+**This Repo's Plugin (Install via Marketplace)**
 
-This repo itself is a Cowork plugin. Register this GitHub repo URL as a plugin in Claude Desktop to automatically install these 3 skills:
+This repo is structured as a Cowork marketplace. In Claude Desktop settings, add a marketplace → enter this GitHub repo URL (`<owner>/cowork-pilot`) to install the `cowork-pilot` plugin, which includes these 3 skills:
 
 | Skill | Role |
 |-------|------|

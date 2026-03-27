@@ -120,9 +120,9 @@ cowork-pilot --mode harness
 
 cowork-pilot이 열어주는 Cowork 세션은 아래 스킬들을 사용한다. 모두 설치되어 있어야 정상 동작한다.
 
-**이 레포의 플러그인 (GitHub URL로 설치)**
+**이 레포의 플러그인 (마켓플레이스로 설치)**
 
-이 레포 자체가 Cowork 플러그인이다. Claude Desktop에서 이 GitHub 레포 URL을 플러그인으로 등록하면 아래 3개 스킬이 자동으로 설치된다:
+이 레포는 Cowork 마켓플레이스 형식으로 구성되어 있다. Claude Desktop 설정에서 마켓플레이스 추가 → 이 GitHub 레포 URL(`<owner>/cowork-pilot`)을 등록하면 `cowork-pilot` 플러그인을 설치할 수 있으며, 아래 3개 스킬이 포함된다:
 
 | 스킬 | 역할 |
 |------|------|
