@@ -1,0 +1,15 @@
+{
+  "name": "cowork-pilot",
+  "description": "E2E AI project automation skills for cowork-pilot",
+  "owner": {
+    "name": "Skudy"
+  },
+  "plugins": [
+    {
+      "name": "cowork-pilot",
+      "description": "E2E AI 프로젝트 자동화를 위한 스킬 번들. docs-restructurer(기획서→docs 변환), chunk-complete(exec-plan 체크박스 마킹), vm-install(VM 안전 설치/정리)을 포함한다.",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}
