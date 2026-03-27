@@ -39,7 +39,7 @@ class Config:
 @dataclass
 class HarnessConfig:
     """Harness-specific configuration (loaded from config.toml [harness])."""
-    idle_timeout_seconds: float = 120.0
+    idle_timeout_seconds: float = 30.0
     completion_check_max_retries: int = 3
     incomplete_retry_max: int = 3
     exec_plans_dir: str = "docs/exec-plans"
@@ -57,6 +57,13 @@ class HarnessConfig:
 
 
 @dataclass
+class ReviewConfig:
+    """Code review configuration (loaded from config.toml [review])."""
+    enabled: bool = True
+    skip_chunks: list[int] = field(default_factory=list)
+
+
+@dataclass
 class MetaConfig:
     """Meta-agent configuration (loaded from config.toml [meta])."""
     approval_mode: str = "auto"  # "manual" | "auto"
@@ -69,6 +76,21 @@ class MetaConfig:
             self.brief_template_dir = str(
                 Path(__file__).parent / "brief_templates"
             )
+
+
+def load_review_config(path: Path) -> ReviewConfig:
+    """Load review config from config.toml's [review] section."""
+    if not path.exists():
+        return ReviewConfig()
+
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    r = data.get("review", {})
+    return ReviewConfig(
+        enabled=r.get("enabled", True),
+        skip_chunks=r.get("skip_chunks", []),
+    )
 
 
 def load_meta_config(path: Path) -> MetaConfig:

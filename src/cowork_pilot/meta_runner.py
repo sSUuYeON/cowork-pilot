@@ -217,15 +217,8 @@ def wait_for_brief_completion(
 
 def _notify(title: str, message: str) -> None:
     """Send macOS notification."""
-    try:
-        script = (
-            f'display notification "{message[:100]}" '
-            f'with title "{title}" '
-            f'sound name "Sosumi"'
-        )
-        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    from cowork_pilot.responder import notify
+    notify(title, message)
 
 
 def notify_and_wait_approval(meta_config: MetaConfig) -> None:
@@ -351,14 +344,7 @@ def run_meta(config: Config, meta_config: MetaConfig) -> None:
     logger.info("meta", "Step 1 complete")
     print("스캐폴딩 완료!")
 
-    # ── Step 2: Fill docs (Phase 2 harness) ──────────────────────
-    logger.info("meta", "Step 2: Filling docs via harness")
-    print("\nStep 2: docs/ 내용 채우기 (Phase 2 하네스)...")
-
-    # Phase 1 ON — clear ignored sessions (brief session is done)
-    ignored_sessions.clear()
-
-    # Set project_dir in config for harness
+    # ── 공통 설정 준비 (Step 2, 4에서 사용) ──────────────────────
     config.project_dir = str(project_dir)
     harness_cfg = harness_config_from(meta_config)
 
@@ -371,7 +357,20 @@ def run_meta(config: Config, meta_config: MetaConfig) -> None:
         harness_cfg.engine_command = config.claude_command
         harness_cfg.engine_args = config.claude_args or ["-p"]
 
-    run_harness(config, harness_cfg, ignored_sessions=ignored_sessions)
+    # ── Step 2: Fill docs (Phase 2 harness) ──────────────────────
+    completed_dir = project_dir / harness_cfg.exec_plans_dir / "completed"
+    docs_setup_completed = (completed_dir / "01-docs-setup.md").exists()
+
+    if docs_setup_completed:
+        logger.info("meta", "Step 2: 01-docs-setup already in completed/, skipping",
+                    completed_file=str(completed_dir / "01-docs-setup.md"))
+        print("Step 2: 이미 완료, 스킵")
+    else:
+        logger.info("meta", "Step 2: Filling docs via harness")
+        print("\nStep 2: docs/ 내용 채우기 (Phase 2 하네스)...")
+        # Phase 1 ON — clear ignored sessions (brief session is done)
+        ignored_sessions.clear()
+        run_harness(config, harness_cfg, ignored_sessions=ignored_sessions)
 
     # ── Step 3: Verify + approve ─────────────────────────────────
     logger.info("meta", "Step 3: Verification")
@@ -405,7 +404,8 @@ def run_meta(config: Config, meta_config: MetaConfig) -> None:
                 print(f"  Plan promoted: {promoted.name}")
             else:
                 # Nothing in active/ or planning/ — we're done (or never started)
-                if plans_executed == 0:
+                if plans_executed == 0 and not (completed_dir / "01-docs-setup.md").exists():
+                    # First run: no plans at all — Step 2 should have created them
                     logger.error(
                         "meta",
                         "No plan in active/ or planning/. "
@@ -419,7 +419,7 @@ def run_meta(config: Config, meta_config: MetaConfig) -> None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-                break  # All plans executed successfully
+                break  # All plans executed (or already completed on resume)
 
         run_harness(config, harness_cfg, ignored_sessions=ignored_sessions)
         plans_executed += 1

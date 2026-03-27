@@ -155,6 +155,48 @@ def execute_applescript(script: str) -> bool:
         return False
 
 
+def notify(
+    title: str,
+    message: str,
+    *,
+    tts: bool = False,
+) -> None:
+    """Send a macOS notification with optional TTS readout.
+
+    Combines notification + terminal bell + optional TTS into one
+    reusable function.  All errors are silently swallowed — this is
+    best-effort alerting, never worth crashing for.
+
+    Args:
+        title: Notification title (e.g. "⚠️ Cowork Pilot — ESCALATE").
+        message: Notification body (truncated to 100 chars for osascript).
+        tts: If True, also speak the message via macOS ``say``.
+    """
+    import sys as _sys
+
+    escaped_title = _escape_applescript(title)
+    escaped_body = _escape_applescript(message[:100])
+
+    script = (
+        f'display notification "{escaped_body}" '
+        f'with title "{escaped_title}" '
+        f'sound name "Sosumi"'
+    )
+    try:
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    # Terminal bell as fallback
+    print(f"\a⚠️  {title}: {message}", file=_sys.stderr)
+
+    if tts:
+        try:
+            subprocess.Popen(["say", message])  # non-blocking
+        except (OSError, ValueError):
+            pass
+
+
 def has_tool_result_arrived(jsonl_path: Path, tool_use_id: str) -> bool:
     """Quick scan: check if a tool_result for *tool_use_id* already exists in JSONL.
 

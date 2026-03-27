@@ -8,11 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cowork_pilot.config import ReviewConfig
 from cowork_pilot.plan_parser import Chunk, CompletionCriterion, ExecPlan, parse_exec_plan
 from cowork_pilot.session_manager import (
     ChunkRetryState,
     HarnessConfig,
     _get_jsonl_snapshot,
+    build_session_prompt,
     detect_new_jsonl,
     find_next_incomplete_chunk,
     handle_chunk_completion,
@@ -126,6 +128,24 @@ class TestOpenChunkSession:
         result = open_chunk_session(chunk, config, tmp_path, max_retries=2)
         assert result is None
         assert mock_open.call_count == 2
+
+    @patch("cowork_pilot.session_manager.detect_new_jsonl")
+    @patch("cowork_pilot.session_opener.open_new_session")
+    def test_review_config_wraps_prompt(self, mock_open, mock_detect, tmp_path):
+        mock_open.return_value = True
+        mock_detect.return_value = tmp_path / "new.jsonl"
+
+        chunk = Chunk(name="Test", number=1, session_prompt="test prompt")
+        config = HarnessConfig()
+        rc = ReviewConfig(enabled=True)
+
+        open_chunk_session(chunk, config, tmp_path, review_config=rc)
+        # The prompt passed to open_new_session should include review instructions
+        call_kwargs = mock_open.call_args
+        actual_prompt = call_kwargs.kwargs.get("initial_prompt") or call_kwargs[1].get("initial_prompt")
+        if actual_prompt is None:
+            actual_prompt = call_kwargs[0][0] if call_kwargs[0] else ""
+        assert "/engineering:code-review" in actual_prompt
 
     @patch("cowork_pilot.session_manager.detect_new_jsonl")
     @patch("cowork_pilot.session_opener.open_new_session")
@@ -326,15 +346,59 @@ class TestRunChunkVerification:
 # ── notify_escalate ──────────────────────────────────────────────────
 
 class TestNotifyEscalate:
-    @patch("cowork_pilot.session_manager.subprocess.run")
+    @patch("cowork_pilot.responder.subprocess.run")
     def test_does_not_raise(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
         notify_escalate("test message")  # should not raise
 
-    @patch("cowork_pilot.session_manager.subprocess.run")
+    @patch("cowork_pilot.responder.subprocess.run")
     def test_handles_oserror(self, mock_run):
         mock_run.side_effect = OSError("no osascript")
         notify_escalate("test message")  # should not raise
+
+
+# ── build_session_prompt ─────────────────────────────────────────────
+
+class TestBuildSessionPrompt:
+    def _make_chunk(self, number=1, prompt="do stuff"):
+        return Chunk(name="Test", number=number, session_prompt=prompt)
+
+    def test_no_review_config_returns_original(self):
+        chunk = self._make_chunk()
+        assert build_session_prompt(chunk) == "do stuff"
+
+    def test_review_disabled_returns_original(self):
+        chunk = self._make_chunk()
+        rc = ReviewConfig(enabled=False)
+        assert build_session_prompt(chunk, rc) == "do stuff"
+
+    def test_review_enabled_appends_instructions(self):
+        chunk = self._make_chunk()
+        rc = ReviewConfig(enabled=True)
+        result = build_session_prompt(chunk, rc)
+        assert result.startswith("do stuff")
+        assert "/engineering:code-review" in result
+        assert "implementation-map" in result
+        assert "/chunk-complete:chunk-complete" in result
+        assert "DESIGN_GUIDE.md" in result
+
+    def test_skip_chunk_returns_original(self):
+        chunk = self._make_chunk(number=1)
+        rc = ReviewConfig(enabled=True, skip_chunks=[1, 3])
+        assert build_session_prompt(chunk, rc) == "do stuff"
+
+    def test_non_skipped_chunk_gets_instructions(self):
+        chunk = self._make_chunk(number=2)
+        rc = ReviewConfig(enabled=True, skip_chunks=[1, 3])
+        result = build_session_prompt(chunk, rc)
+        assert "/engineering:code-review" in result
+
+    def test_prompt_preserves_original_content(self):
+        original = "exec-plan을 읽고 Chunk 3을 진행해.\n빌드 후 테스트 실행."
+        chunk = self._make_chunk(prompt=original)
+        rc = ReviewConfig(enabled=True)
+        result = build_session_prompt(chunk, rc)
+        assert result.startswith(original)
 
 
 class TestPromoteNextPlan:

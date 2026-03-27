@@ -34,13 +34,42 @@ def test_load_config_missing_file():
     assert config.engine == "claude"  # falls back to defaults
 
 
-from cowork_pilot.config import MetaConfig, load_meta_config
+from cowork_pilot.config import MetaConfig, load_meta_config, ReviewConfig, load_review_config
+
+
+class TestReviewConfig:
+    def test_defaults(self):
+        rc = ReviewConfig()
+        assert rc.enabled is True
+        assert rc.skip_chunks == []
+
+    def test_load_from_toml(self, tmp_path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text(
+            '[review]\n'
+            'enabled = false\n'
+            'skip_chunks = [1, 5]\n'
+        )
+        rc = load_review_config(toml_file)
+        assert rc.enabled is False
+        assert rc.skip_chunks == [1, 5]
+
+    def test_load_missing_file(self, tmp_path):
+        rc = load_review_config(tmp_path / "nonexistent.toml")
+        assert rc.enabled is True
+        assert rc.skip_chunks == []
+
+    def test_load_missing_section(self, tmp_path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text('[engine]\ndefault = "claude"\n')
+        rc = load_review_config(toml_file)
+        assert rc.enabled is True
 
 
 class TestMetaConfig:
     def test_defaults(self):
         mc = MetaConfig()
-        assert mc.approval_mode == "manual"
+        assert mc.approval_mode == "auto"
         assert mc.project_dir == ""
         assert mc.initial_description == ""
         assert mc.brief_template_dir != ""
@@ -58,4 +87,4 @@ class TestMetaConfig:
 
     def test_load_missing_file(self, tmp_path):
         mc = load_meta_config(tmp_path / "nonexistent.toml")
-        assert mc.approval_mode == "manual"
+        assert mc.approval_mode == "auto"

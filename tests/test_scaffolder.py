@@ -84,6 +84,10 @@ class TestScaffoldDirectories:
         assert (tmp_path / "docs" / "references").is_dir()
         assert (tmp_path / "docs" / "generated").is_dir()
 
+    def test_creates_implementation_map_dir(self, tmp_path, minimal_brief):
+        scaffold_project(minimal_brief, tmp_path)
+        assert (tmp_path / "docs" / "implementation-map").is_dir()
+
     def test_creates_planning_dir(self, tmp_path, minimal_brief):
         scaffold_project(minimal_brief, tmp_path)
         assert (tmp_path / "docs" / "exec-plans" / "planning").is_dir()
@@ -120,6 +124,40 @@ class TestScaffoldFiles:
         for fname in ["QUALITY_SCORE.md", "SECURITY.md", "DESIGN_GUIDE.md"]:
             content = (tmp_path / "docs" / fname).read_text()
             assert "<!-- GUIDE:" in content
+
+    def test_design_guide_has_all_sections(self, tmp_path, full_brief):
+        """DESIGN_GUIDE.md에 섹션 1~7이 모두 포함되어야 한다."""
+        scaffold_project(full_brief, tmp_path)
+        content = (tmp_path / "docs" / "DESIGN_GUIDE.md").read_text()
+        assert "## 1. 디자인 원칙" in content
+        assert "## 2. 컬러/타이포그래피" in content
+        assert "## 3. 컴포넌트 규칙" in content
+        assert "## 4. 레퍼런스" in content
+        assert "## 5. 레이아웃 시스템" in content
+        assert "## 6. 스페이싱 체계" in content
+        assert "## 7. 반응형 규칙" in content
+
+    def test_design_guide_layout_section_has_required_keywords(self, tmp_path, full_brief):
+        """레이아웃/스페이싱/반응형 GUIDE에 구체적 수치 관련 키워드가 있어야 한다."""
+        scaffold_project(full_brief, tmp_path)
+        content = (tmp_path / "docs" / "DESIGN_GUIDE.md").read_text()
+        # 레이아웃 시스템 — 브레이크포인트, max-width 등 구체적 키워드
+        assert "브레이크포인트" in content
+        assert "max-width" in content
+        # 스페이싱 체계 — px값 관련
+        assert "xs" in content and "xl" in content
+        # 반응형 규칙 — 주관적 표현 금지 안내
+        assert "주관적 표현 금지" in content
+
+    def test_agents_has_implementation_map_section(self, tmp_path, full_brief):
+        """AGENTS.md에 Implementation Map 섹션과 절대규칙이 포함되어야 한다."""
+        scaffold_project(full_brief, tmp_path)
+        content = (tmp_path / "AGENTS.md").read_text()
+        assert "## Implementation Map" in content
+        assert "implementation-map/index.md" in content
+        assert "## 절대 규칙: 코드를 예측하지 마라" in content
+        # Directory Map에도 implementation-map 경로가 있어야 함
+        assert "docs/implementation-map/" in content
 
     def test_writing_standards_in_agents(self, tmp_path, full_brief):
         scaffold_project(full_brief, tmp_path)
@@ -160,6 +198,14 @@ class TestScaffoldFiles:
         assert "## Chunk 1:" in content
         assert "## Metadata" in content
         assert "### Session Prompt" in content
+
+    def test_exec_plan_chunk2_includes_design_guide(self, tmp_path, full_brief):
+        """docs-setup exec-plan의 Chunk 2가 DESIGN_GUIDE.md 작성을 포함해야 한다."""
+        scaffold_project(full_brief, tmp_path)
+        plan = tmp_path / "docs" / "exec-plans" / "active" / "01-docs-setup.md"
+        content = plan.read_text()
+        assert "DESIGN_GUIDE.md" in content
+        assert "구체적인 수치" in content or "구체적 수치" in content
 
     def test_no_domain_docs_when_no_constraints(self, tmp_path, minimal_brief):
         scaffold_project(minimal_brief, tmp_path)

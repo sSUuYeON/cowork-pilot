@@ -21,8 +21,9 @@ def find_active_jsonl(base_path: Path | str) -> Path | None:
     for jsonl_file in base.rglob("*.jsonl"):
         if jsonl_file.name in IGNORED_FILENAMES:
             continue
-        if jsonl_file.stat().st_size > 0:
-            candidates.append((jsonl_file.stat().st_mtime, jsonl_file))
+        s = jsonl_file.stat()
+        if s.st_size > 0:
+            candidates.append((s.st_mtime, jsonl_file))
 
     if not candidates:
         return None

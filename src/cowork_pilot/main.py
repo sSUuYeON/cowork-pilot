@@ -9,21 +9,14 @@ from cowork_pilot.config import Config, HarnessConfig, load_config, load_harness
 from cowork_pilot.dispatcher import build_prompt, call_cli, load_docs
 from cowork_pilot.logger import StructuredLogger
 from cowork_pilot.models import Event, EventType, Response, WatcherState
-from cowork_pilot.responder import build_applescript, execute_applescript, has_tool_result_arrived, post_verify_response, set_clipboard
+from cowork_pilot.responder import build_applescript, execute_applescript, has_tool_result_arrived, notify, post_verify_response, set_clipboard
 from cowork_pilot.session_finder import find_active_jsonl
 from cowork_pilot.validator import validate_response
 from cowork_pilot.watcher import JSONLTail, WatcherStateMachine, parse_jsonl_line
 
 
 def _notify_escalate(event: Event) -> None:
-    """Send macOS notification + sound when ESCALATE is triggered.
-
-    Uses osascript to show a native macOS notification center alert
-    and plays the system alert sound so the user notices.
-    """
-    import subprocess as _sp
-
-    # Build descriptive message
+    """Send macOS notification + TTS when ESCALATE is triggered."""
     if event.event_type == EventType.QUESTION and event.questions:
         question_text = event.questions[0].get("question", "Unknown question")
         body = f"Q: {question_text[:80]}"
@@ -36,34 +29,7 @@ def _notify_escalate(event: Event) -> None:
     else:
         body = f"{event.event_type.value} — {event.tool_name}"
 
-    title = "⚠️ Cowork Pilot — ESCALATE"
-
-    # macOS notification via osascript
-    script = (
-        f'display notification "{_escape_for_applescript(body)}" '
-        f'with title "{_escape_for_applescript(title)}" '
-        f'sound name "Sosumi"'
-    )
-    try:
-        _sp.run(["osascript", "-e", script], capture_output=True, timeout=5)
-    except (OSError, _sp.TimeoutExpired):
-        pass
-
-    # Terminal bell as fallback
-    print(f"\a⚠️  ESCALATE: {body}", file=sys.stderr)
-
-    # TTS readout via macOS `say`
-    tts_text = f"에스컬레이트. {body}"
-    try:
-        _sp.Popen(["say", tts_text])  # non-blocking
-    except (OSError, ValueError):
-        pass
-
-
-
-def _escape_for_applescript(text: str) -> str:
-    """Escape special characters for AppleScript string literals."""
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    notify("⚠️ Cowork Pilot — ESCALATE", body, tts=True)
 
 
 def process_one_event(
@@ -374,12 +340,30 @@ def run_harness(
         chunk = find_next_incomplete_chunk(plan)
 
         if chunk is None:
-            # All chunks completed
+            # All chunks in current plan completed
             completed_path = move_to_completed(plan_path)
-            logger.info("harness", "All chunks completed", dest=str(completed_path))
-            notify_escalate("구현 계획 실행 완료!")
-            print(f"Harness: All chunks completed! Plan moved to {completed_path}")
-            break
+            logger.info("harness", "Plan completed", dest=str(completed_path))
+            print(f"Harness: Plan completed! Moved to {completed_path}")
+
+            # Try to promote next plan from planning/
+            promoted = promote_next_plan(active_dir.parent)
+            if promoted is None:
+                # No more plans — truly done
+                logger.info("harness", "All plans completed")
+                notify("✅ Cowork Pilot — 전체 완료", "모든 구현 계획이 완료되었습니다.", tts=True)
+                print("Harness: All plans completed!")
+                break
+
+            # Load the promoted plan and continue
+            plan_path = promoted
+            logger.info("harness", "Promoted next plan", plan=str(plan_path))
+            print(f"\nHarness: Promoted {plan_path.name} to active/")
+            try:
+                plan = parse_exec_plan(plan_path)
+            except (ValueError, OSError) as e:
+                notify_escalate(f"exec-plan parse error: {e}")
+                break
+            continue
 
         logger.info("harness", f"Starting Chunk {chunk.number}: {chunk.name}")
         print(f"\nHarness: Starting Chunk {chunk.number}: {chunk.name}")

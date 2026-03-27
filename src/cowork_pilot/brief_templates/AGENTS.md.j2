@@ -8,6 +8,7 @@
 - `docs/design-docs/` — 설계 문서 (index.md에서 색인)
 - `docs/product-specs/` — 페이지/기능별 스펙 (index.md에서 색인)
 - `docs/exec-plans/active/` — 현재 진행 중인 구현 계획
+- `docs/implementation-map/` — 기능별 구현 위치 색인 (index.md에서 진입)
 - `tests/` — 테스트
 
 ## When Making Changes
@@ -24,6 +25,18 @@
 {% endif %}{% if brief.database %}- Database: {{ brief.database }}
 {% endif %}{% if brief.package_manager %}- Package manager: {{ brief.package_manager }}
 {% endif %}
+
+## Implementation Map
+
+이 프로젝트의 기능별 구현 위치는 `docs/implementation-map/index.md`에서 확인한다.
+특정 기능의 코드를 찾을 때는 반드시 이 맵을 먼저 참조한다.
+
+## 절대 규칙: 코드를 예측하지 마라
+
+- 코드의 내용, 구조, 위치를 추측하지 마라
+- 반드시 파일을 직접 열어 읽고 확인한 후에 작업해라
+- Implementation Map은 "어디를 읽어야 하는지" 알려줄 뿐, 코드의 내용을 보장하지 않는다
+- "아마 이 함수가 이렇게 되어 있을 것이다"라는 가정 하에 작업하지 마라
 
 ## Writing Standards
 

@@ -28,8 +28,12 @@ level = "INFO"
 # [project]
 # dir = 
 
+[review]
+enabled = true
+skip_chunks = []                  # 리뷰 건너뛸 chunk 번호 (예: [1])
+
 [harness]
-idle_timeout_seconds = 120
+idle_timeout_seconds = 30
 completion_check_max_retries = 3
 incomplete_retry_max = 3
 exec_plans_dir = "docs/exec-plans"

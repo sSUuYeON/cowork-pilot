@@ -32,15 +32,17 @@ AGENTS.md를 먼저 읽어서 Writing Standards와 프로젝트 구조를 파악
 
 ---
 
-## Chunk 2: 도메인별 설계 문서
+## Chunk 2: 도메인별 설계 문서 + 디자인 가이드
 
 ### Completion Criteria
 - [ ] docs/design-docs/ 아래 모든 .md 파일이 비어있지 않음
 - [ ] docs/design-docs/index.md에 모든 문서가 색인됨
+- [ ] docs/DESIGN_GUIDE.md의 모든 섹션(1~7)이 채워짐
 
 ### Tasks
 - Task 1: 브리프의 제약/결정에 따라 도메인별 설계 문서 작성
 - Task 2: index.md 업데이트
+- Task 3: docs/DESIGN_GUIDE.md 작성 — 구체적 수치 필수
 
 ### Session Prompt
 ```
@@ -50,6 +52,16 @@ docs/project-brief.md와 ARCHITECTURE.md를 참고해서
 docs/design-docs/ 아래 빈 파일들의 <!-- GUIDE: --> 주석을 따라 내용을 채워.
 내용을 채운 후 GUIDE 주석은 반드시 삭제해.
 index.md도 업데이트해.
+
+docs/DESIGN_GUIDE.md도 이 Chunk에서 작성한다.
+DESIGN_GUIDE.md를 작성할 때, 반드시 구체적인 수치를 포함해라:
+- px 값 (spacing, font-size, breakpoint)
+- 색상 hex 코드
+- flex/grid 비율
+"적절한", "충분한" 같은 주관적 표현 대신 측정 가능한 값을 사용해라.
+레이아웃 시스템 섹션에서는 페이지별 레이아웃 구조를 ASCII 다이어그램으로 표현해라.
+반응형 규칙 섹션의 브레이크포인트는 레이아웃 시스템 섹션의 정의와 일치해야 한다.
+
 완료 조건을 모두 만족시켜.
 ```
 

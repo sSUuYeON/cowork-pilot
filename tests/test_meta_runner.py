@@ -12,6 +12,7 @@ from cowork_pilot.config import Config, MetaConfig
 from cowork_pilot.meta_runner import (
     build_brief_prompt,
     harness_config_from,
+    run_meta,
     wait_for_brief_completion,
 )
 
@@ -103,3 +104,98 @@ class TestWaitForBriefCompletion:
             wait_for_brief_completion(
                 jsonl_path, mc, poll_interval=0.1, timeout=1.0,
             )
+
+
+class TestMetaResumeStep2:
+    """Step 2 resume — skip when 01-docs-setup.md already in completed/."""
+
+    def _make_project(self, tmp_path):
+        """Create a project dir with complete brief + scaffolded structure."""
+        project_dir = tmp_path / "project"
+        docs = project_dir / "docs"
+        docs.mkdir(parents=True)
+
+        brief_path = docs / "project-brief.md"
+        brief_path.write_text(textwrap.dedent("""\
+            # Project Brief
+
+            ## 1. Overview
+            - name: "Test"
+            - description: "Test project"
+            - type: "cli"
+
+            ## 2. Tech Stack
+            - language: "python"
+            - framework: "none"
+        """))
+
+        (project_dir / "AGENTS.md").write_text("# AGENTS\n")
+
+        ep = docs / "exec-plans"
+        (ep / "active").mkdir(parents=True)
+        (ep / "completed").mkdir(parents=True)
+        (ep / "planning").mkdir(parents=True)
+
+        return project_dir, ep
+
+    def test_step2_skip_when_completed(self, tmp_path):
+        """completed/에 01-docs-setup.md가 있으면 run_harness 호출 안 됨."""
+        project_dir, ep = self._make_project(tmp_path)
+        (ep / "completed" / "01-docs-setup.md").write_text("# Done\n")
+
+        config = Config(project_dir=str(project_dir), log_path=str(tmp_path / "log.jsonl"))
+        meta_config = MetaConfig(project_dir=str(project_dir), approval_mode="auto")
+
+        with patch("cowork_pilot.main.run_harness") as mock_harness, \
+             patch("cowork_pilot.session_manager.promote_next_plan", return_value=None), \
+             patch("cowork_pilot.meta_runner.scaffold_project"):
+            run_meta(config, meta_config)
+            mock_harness.assert_not_called()
+
+    def test_step2_resume_when_active(self, tmp_path):
+        """active/에 01-docs-setup.md가 있으면 run_harness 호출됨."""
+        project_dir, ep = self._make_project(tmp_path)
+        active_plan = ep / "active" / "01-docs-setup.md"
+        active_plan.write_text("# In Progress\n")
+
+        config = Config(project_dir=str(project_dir), log_path=str(tmp_path / "log.jsonl"))
+        meta_config = MetaConfig(project_dir=str(project_dir), approval_mode="auto")
+
+        import shutil
+
+        def fake_harness(*args, **kwargs):
+            """Simulate run_harness completing: move active → completed."""
+            if active_plan.exists():
+                shutil.move(str(active_plan), str(ep / "completed" / active_plan.name))
+
+        with patch("cowork_pilot.main.run_harness", side_effect=fake_harness) as mock_harness, \
+             patch("cowork_pilot.session_manager.promote_next_plan", return_value=None), \
+             patch("cowork_pilot.meta_runner.scaffold_project"):
+            run_meta(config, meta_config)
+            mock_harness.assert_called()
+
+    def test_harness_cfg_available_after_step2_skip(self, tmp_path):
+        """Step 2 스킵 후에도 Step 4에서 harness_cfg 사용 가능 (NameError 없음)."""
+        project_dir, ep = self._make_project(tmp_path)
+        (ep / "completed" / "01-docs-setup.md").write_text("# Done\n")
+        (ep / "planning" / "02-impl.md").write_text("# Plan\n")
+
+        config = Config(project_dir=str(project_dir), log_path=str(tmp_path / "log.jsonl"))
+        meta_config = MetaConfig(project_dir=str(project_dir), approval_mode="auto")
+
+        import shutil
+
+        def fake_harness(*args, **kwargs):
+            """Simulate run_harness: clear active/ plans."""
+            for f in (ep / "active").glob("*.md"):
+                shutil.move(str(f), str(ep / "completed" / f.name))
+
+        with patch("cowork_pilot.main.run_harness", side_effect=fake_harness) as mock_harness, \
+             patch("cowork_pilot.session_manager.promote_next_plan") as mock_promote, \
+             patch("cowork_pilot.meta_runner.scaffold_project"):
+            promoted_path = ep / "active" / "02-impl.md"
+            mock_promote.side_effect = [promoted_path, None]
+
+            # This should NOT raise NameError for harness_cfg
+            run_meta(config, meta_config)
+            mock_harness.assert_called()

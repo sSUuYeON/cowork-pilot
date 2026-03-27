@@ -24,7 +24,7 @@ def is_idle_trigger(
     last_record: dict | None,
     last_record_time: float,
     now: float,
-    idle_timeout_seconds: float = 120.0,
+    idle_timeout_seconds: float = 30.0,
 ) -> bool:
     """Return True when idle timeout + turn-end conditions are met.
 
@@ -106,12 +106,13 @@ def call_verification_cli(
     if engine_args is None:
         engine_args = ["-p"]
 
-    cmd = [engine_command] + engine_args + [prompt]
+    cmd = [engine_command] + engine_args
     try:
         import sys as _sys
-        print(f"  [verify] cmd={cmd[:2]}... cwd={project_dir}", file=_sys.stderr)
+        print(f"  [verify] cmd={cmd}... cwd={project_dir}", file=_sys.stderr)
         result = subprocess.run(
             cmd,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,

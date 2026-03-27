@@ -21,27 +21,57 @@ def classify_tool_use(tool_use: dict) -> EventType:
     return EventType.PERMISSION
 
 
+def _read_tail(path: Path, chunk_size: int = 64 * 1024) -> str:
+    """Read the last *chunk_size* bytes of a file as UTF-8 text.
+
+    If the file is smaller than *chunk_size*, the entire file is returned.
+    The first (possibly partial) line is discarded to avoid broken JSON.
+    """
+    size = path.stat().st_size
+    if size == 0:
+        return ""
+    read_size = min(chunk_size, size)
+    with open(path, "rb") as f:
+        f.seek(size - read_size)
+        raw = f.read(read_size)
+    text = raw.decode("utf-8", errors="replace")
+    # Discard the first partial line (unless we read from the very start)
+    if read_size < size:
+        first_nl = text.find("\n")
+        if first_nl != -1:
+            text = text[first_nl + 1:]
+        else:
+            return ""  # no complete line in chunk — shouldn't happen at 64KB
+    return text
+
+
 def extract_context(jsonl_path: Path, max_lines: int = 10) -> list[str]:
     """Extract recent conversation lines from JSONL for CLI context.
 
-    Reads from the end of the file, filters to user/assistant records,
-    returns up to max_lines of summarized conversation.
+    Reads only the tail of the file (64 KB by default) instead of the
+    entire file, then parses backwards to collect the most recent
+    *max_lines* user/assistant records.
     """
-    records: list[dict] = []
     try:
-        with open(jsonl_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if record.get("type") in ("user", "assistant"):
-                    records.append(record)
+        tail_text = _read_tail(jsonl_path)
     except (FileNotFoundError, OSError):
         return []
+
+    if not tail_text:
+        return []
+
+    # Parse all user/assistant records from the tail chunk
+    records: list[dict] = []
+    for line in tail_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("type") in ("user", "assistant"):
+            records.append(record)
 
     # Take the most recent max_lines records
     recent = records[-max_lines:]

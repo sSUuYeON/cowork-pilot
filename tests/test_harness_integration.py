@@ -186,7 +186,7 @@ class TestHarnessConfigLoading:
     def test_load_harness_config_defaults(self, tmp_path):
         """No config file → defaults."""
         cfg = load_harness_config(tmp_path / "nonexistent.toml")
-        assert cfg.idle_timeout_seconds == 120.0
+        assert cfg.idle_timeout_seconds == 30.0
         assert cfg.completion_check_max_retries == 3
 
     def test_load_harness_config_from_toml(self, tmp_path):

@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import glob as _glob
 import shutil
-import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from cowork_pilot.completion_detector import (
@@ -25,30 +24,53 @@ from cowork_pilot.completion_detector import (
     is_idle_trigger,
     send_feedback,
 )
+from cowork_pilot.config import HarnessConfig, ReviewConfig
 from cowork_pilot.plan_parser import Chunk, ExecPlan, parse_exec_plan, update_checkboxes
 from cowork_pilot.session_finder import IGNORED_FILENAMES
 
 
-# ── Configuration ────────────────────────────────────────────────────
+# ── Session prompt builder ──────────────────────────────────────────
 
-@dataclass
-class HarnessConfig:
-    """Harness-specific configuration (loaded from config.toml [harness])."""
-    idle_timeout_seconds: float = 120.0
-    completion_check_max_retries: int = 3
-    incomplete_retry_max: int = 3
-    exec_plans_dir: str = "docs/exec-plans"
+REVIEW_INSTRUCTIONS = """\
 
-    # Session timing
-    session_open_delay: float = 3.0
-    session_prompt_delay: float = 1.0
-    session_detect_timeout: float = 10.0
-    session_detect_poll_interval: float = 1.0
+다음 순서를 반드시 지켜라:
 
-    # Engine for CLI verification
-    engine: str = "claude"
-    engine_command: str = "claude"
-    engine_args: list[str] = field(default_factory=lambda: ["-p"])
+1. 위 Tasks를 구현해라
+2. 구현 완료 후 /engineering:code-review 스킬로 이번 chunk의 코드를 리뷰해라
+   - 추가 리뷰 항목: docs/DESIGN_GUIDE.md의 레이아웃/스페이싱 수치 준수 여부
+3. 리뷰에서 발견된 문제를 직접 수정해라
+4. docs/implementation-map/ 아래에 이번 기능의 구현 기록을 작성해라
+   - 기능 폴더와 index.md 생성 (형식은 docs/implementation-map/index.md 참조)
+   - docs/implementation-map/index.md 루트 테이블에도 행 추가
+5. 마지막으로 /chunk-complete:chunk-complete 스킬로 완료 처리해라
+
+※ /vm-install:vm-install은 순서 무관 — npm install 등 설치가 필요한 시점에 호출
+※ /chunk-complete:chunk-complete는 반드시 마지막에 호출 (리뷰+수정+기록 완료 후)
+스타일/레이아웃 구현 시 반드시 docs/DESIGN_GUIDE.md를 직접 열어 읽고 수치를 따라라.
+코드를 예측하지 말고 항상 직접 확인해라."""
+
+
+def build_session_prompt(
+    chunk: Chunk,
+    review_config: ReviewConfig | None = None,
+) -> str:
+    """Wrap a chunk's session prompt with review instructions if enabled.
+
+    When review is enabled (and this chunk is not in skip_chunks),
+    appends the review/implementation-map/chunk-complete ordering
+    instructions to the original session prompt.
+
+    When review is disabled, returns the original prompt unchanged.
+    """
+    prompt = chunk.session_prompt
+
+    if review_config is None or not review_config.enabled:
+        return prompt
+
+    if chunk.number in review_config.skip_chunks:
+        return prompt
+
+    return prompt + REVIEW_INSTRUCTIONS
 
 
 # ── Session lifecycle helpers ────────────────────────────────────────
@@ -92,23 +114,27 @@ def open_chunk_session(
     harness_config: HarnessConfig,
     session_base_path: Path,
     max_retries: int = 3,
+    review_config: ReviewConfig | None = None,
 ) -> Path | None:
     """Open a new Cowork session for a Chunk and return the new JSONL path.
 
     Steps:
-    1. Snapshot current JSONL files
-    2. Call session_opener.open_new_session() with chunk's prompt
-    3. Detect the new JSONL file
+    1. Build session prompt (with review instructions if enabled)
+    2. Snapshot current JSONL files
+    3. Call session_opener.open_new_session() with the prompt
+    4. Detect the new JSONL file
 
     Returns the new JSONL Path, or None on failure.
     """
     from cowork_pilot.session_opener import open_new_session
 
+    prompt = build_session_prompt(chunk, review_config)
+
     for attempt in range(max_retries):
         snapshot = _get_jsonl_snapshot(session_base_path)
 
         success = open_new_session(
-            initial_prompt=chunk.session_prompt,
+            initial_prompt=prompt,
             session_load_delay=harness_config.session_open_delay,
         )
 
@@ -189,18 +215,9 @@ class ChunkRetryState:
 # ── ESCALATE ─────────────────────────────────────────────────────────
 
 def notify_escalate(message: str) -> None:
-    """Send macOS notification for ESCALATE and pause."""
-    try:
-        script = (
-            f'display notification "{message[:100]}" '
-            f'with title "⚠️ Harness ESCALATE" '
-            f'sound name "Sosumi"'
-        )
-        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    import sys
-    print(f"\a⚠️  HARNESS ESCALATE: {message}", file=sys.stderr)
+    """Send macOS notification for ESCALATE."""
+    from cowork_pilot.responder import notify
+    notify("⚠️ Harness ESCALATE", message)
 
 
 # ── Main orchestration ───────────────────────────────────────────────

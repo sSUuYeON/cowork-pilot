@@ -178,6 +178,7 @@ def scaffold_project(
         "docs/exec-plans/completed",
         "docs/references",
         "docs/generated",
+        "docs/implementation-map",
         "src",
         "tests",
     ]
@@ -259,7 +260,10 @@ def scaffold_project(
         project_dir=str(project_dir.resolve()),
         today=today,
     )
-    _write_if_not_exists(
-        project_dir / "docs" / "exec-plans" / "active" / "01-docs-setup.md",
-        plan_content,
-    )
+    plan_filename = "01-docs-setup.md"
+    completed_path = project_dir / "docs" / "exec-plans" / "completed" / plan_filename
+    if not completed_path.exists():
+        _write_if_not_exists(
+            project_dir / "docs" / "exec-plans" / "active" / plan_filename,
+            plan_content,
+        )
