@@ -37,6 +37,7 @@ idle_timeout_seconds = 30
 completion_check_max_retries = 3
 incomplete_retry_max = 3
 exec_plans_dir = "docs/exec-plans"
+build_timeout_seconds = 600
 
 # [docs_orchestrator]
 # idle_timeout_seconds = 120          # 초기값. 첫 3개 세션에만 적용

@@ -31,6 +31,22 @@ from cowork_pilot.session_finder import IGNORED_FILENAMES
 
 # ── Session prompt builder ──────────────────────────────────────────
 
+LOCAL_BUILD_NOTICE = """\
+
+⚠️ 이 Chunk의 Completion Criteria에 [BUILD] 태그 항목이 있다.
+[BUILD] 태그가 붙은 빌드/테스트 명령은 VM에서 실행하지 마라.
+로컬 harness가 자동으로 실행한다.
+빌드/테스트를 제외한 나머지 작업(코드 작성, 파일 생성 등)만 수행해라."""
+
+
+def _chunk_has_build_criteria(chunk: Chunk) -> bool:
+    """Check if chunk has any unchecked [BUILD] criteria."""
+    return any(
+        c.build_command and not c.checked
+        for c in chunk.completion_criteria
+    )
+
+
 REVIEW_INSTRUCTIONS = """\
 
 다음 순서를 반드시 지켜라:
@@ -61,8 +77,14 @@ def build_session_prompt(
     instructions to the original session prompt.
 
     When review is disabled, returns the original prompt unchanged.
+
+    Also injects a VM build notice if the chunk has unchecked [BUILD] criteria.
     """
     prompt = chunk.session_prompt
+
+    # Inject VM build notice if chunk has unchecked [BUILD] criteria
+    if _chunk_has_build_criteria(chunk):
+        prompt += LOCAL_BUILD_NOTICE
 
     if review_config is None or not review_config.enabled:
         return prompt
@@ -283,19 +305,78 @@ def process_chunk(
     # Callbacks for testing — allow injection of mock functions
     verify_fn=None,
     feedback_fn=None,
+    build_fn=None,
 ) -> str:
     """Process the verification/feedback cycle for one chunk.
+
+    Steps:
+    1. Run [BUILD] criteria locally (if present and unchecked)
+    2. Run standard checkbox verification
+    3. Return COMPLETED, INCOMPLETE, or ESCALATE
 
     Returns:
     - "COMPLETED" — chunk is done, checkboxes updated
     - "ESCALATE" — retries exhausted, needs human intervention
-    - "WAITING" — idle conditions not met, keep watching
+    - "INCOMPLETE" — incomplete criteria, feedback sent
+    - "ERROR" — CLI/parsing error, retry
     """
     if verify_fn is None:
         verify_fn = run_chunk_verification
     if feedback_fn is None:
         feedback_fn = send_feedback
+    if build_fn is None:
+        from cowork_pilot.completion_detector import run_build_criteria
+        build_fn = run_build_criteria
 
+    # ── Step 1: Run [BUILD] criteria locally ──
+    try:
+        fresh_plan = parse_exec_plan(plan_path)
+    except (OSError, ValueError):
+        fresh_plan = None
+
+    fresh_chunk = None
+    if fresh_plan:
+        for c in fresh_plan.chunks:
+            if c.number == chunk.number:
+                fresh_chunk = c
+                break
+
+    if fresh_chunk is not None:
+        has_unchecked_builds = any(
+            c.build_command and not c.checked
+            for c in fresh_chunk.completion_criteria
+        )
+
+        if has_unchecked_builds:
+            build_status, build_detail = build_fn(
+                fresh_chunk, project_dir, plan_path,
+                timeout=harness_config.build_timeout_seconds,
+            )
+
+            if build_status == "FAILED":
+                retry_state.incomplete_feedback_count += 1
+                if retry_state.incomplete_feedback_count > harness_config.incomplete_retry_max:
+                    return "ESCALATE"
+                feedback_text = (
+                    f"로컬 빌드 실패:\n{build_detail}\n\n"
+                    f"코드를 수정하고 다시 idle 상태로 대기해라."
+                )
+                feedback_fn(feedback_text)
+                return "INCOMPLETE"
+
+            # PASSED — send feedback for code-review + chunk-complete
+            has_build_criteria = any(
+                c.build_command for c in fresh_chunk.completion_criteria
+            )
+            if has_build_criteria:
+                feedback_text = (
+                    "로컬 빌드/테스트 전체 통과 ✓\n\n"
+                    "이제 /engineering:code-review → /chunk-complete:chunk-complete 순서로 진행해라."
+                )
+                feedback_fn(feedback_text)
+                return "INCOMPLETE"
+
+    # ── Step 2: Standard checkbox verification ──
     status, detail = verify_fn(chunk, harness_config, project_dir, plan_path=plan_path)
 
     if status == "COMPLETED":

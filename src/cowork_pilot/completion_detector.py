@@ -189,3 +189,86 @@ def send_feedback(
 
     script = build_type_prompt_script(activate_delay=activate_delay)
     return execute_applescript(script)
+
+
+# ── Local build execution ───────────────────────────────────────────
+
+def run_local_build(
+    command: str,
+    project_dir: str,
+    timeout: float = 600.0,
+) -> tuple[bool, str, str]:
+    """Run a build command locally via subprocess.
+
+    Returns (success, stdout, stderr).
+    """
+    import sys as _sys
+    print(f"  [build] Running: {command} (cwd={project_dir})", file=_sys.stderr)
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode == 0:
+            print(f"  [build] ✓ exit code 0", file=_sys.stderr)
+        else:
+            print(f"  [build] ✗ exit code {result.returncode}", file=_sys.stderr)
+        return (result.returncode == 0, result.stdout, result.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"  [build] ✗ timed out after {timeout}s", file=_sys.stderr)
+        return (False, "", f"Build timed out after {timeout}s")
+    except OSError as exc:
+        print(f"  [build] ✗ OS error: {exc}", file=_sys.stderr)
+        return (False, "", f"Build failed to start: {exc}")
+
+
+def run_build_criteria(
+    chunk: Chunk,
+    project_dir: str,
+    plan_path: "Path",
+    timeout: float = 600.0,
+) -> tuple[str, str]:
+    """Run [BUILD]-tagged criteria locally via subprocess.
+
+    Returns:
+        ("PASSED", "") — all builds passed (or no [BUILD] items)
+        ("FAILED", "error detail") — a build failed
+    """
+    from pathlib import Path as _Path
+
+    # Validate project_dir
+    if not project_dir or not _Path(project_dir).is_dir():
+        return ("FAILED", f"project_dir이 유효하지 않음: {project_dir}")
+
+    build_criteria = [
+        (i, c) for i, c in enumerate(chunk.completion_criteria)
+        if c.build_command and not c.checked
+    ]
+
+    if not build_criteria:
+        return ("PASSED", "")
+
+    import sys as _sys
+    from cowork_pilot.plan_parser import update_checkboxes_by_description
+
+    for idx, criterion in build_criteria:
+        print(f"  [build] Running: {criterion.build_command}", file=_sys.stderr)
+        success, stdout, stderr = run_local_build(
+            criterion.build_command,
+            project_dir,
+            timeout=timeout,
+        )
+
+        if success:
+            print(f"  [build] ✓ {criterion.build_command}", file=_sys.stderr)
+            update_checkboxes_by_description(plan_path, chunk.number, criterion.description)
+        else:
+            error_log = stderr[-2000:] if stderr else stdout[-2000:]
+            print(f"  [build] ✗ {criterion.build_command}", file=_sys.stderr)
+            return ("FAILED", f"빌드 실패: {criterion.build_command}\n{error_log}")
+
+    return ("PASSED", "")

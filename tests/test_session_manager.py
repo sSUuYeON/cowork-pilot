@@ -291,6 +291,102 @@ class TestProcessChunk:
         )
         assert result == "ESCALATE"
 
+    def test_build_failure_sends_feedback(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        shutil.copy(SAMPLE_PLAN, plan_file)
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="test",
+            completion_criteria=[
+                CompletionCriterion("npm run build", False, build_command="npm run build"),
+            ],
+        )
+        retry = ChunkRetryState()
+
+        def mock_build(c, pd, pp, timeout=600.0):
+            return ("FAILED", "Error: build failed")
+
+        result = process_chunk(
+            plan_file, chunk, HarnessConfig(), "/tmp",
+            retry, build_fn=mock_build, feedback_fn=lambda t: True,
+        )
+        assert result == "INCOMPLETE"
+        assert retry.incomplete_feedback_count == 1
+
+    def test_build_success_sends_review_feedback(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        shutil.copy(SAMPLE_PLAN, plan_file)
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="test",
+            completion_criteria=[
+                CompletionCriterion("파일 존재", False),
+                CompletionCriterion("npm run build", False, build_command="npm run build"),
+            ],
+        )
+        retry = ChunkRetryState()
+        feedback_texts = []
+
+        def mock_build(c, pd, pp, timeout=600.0):
+            return ("PASSED", "")
+
+        def mock_feedback(text):
+            feedback_texts.append(text)
+            return True
+
+        result = process_chunk(
+            plan_file, chunk, HarnessConfig(), "/tmp",
+            retry, build_fn=mock_build, feedback_fn=mock_feedback,
+        )
+        assert result == "INCOMPLETE"
+        assert len(feedback_texts) == 1
+        assert "통과" in feedback_texts[0]
+
+    def test_no_build_criteria_falls_through_to_verify(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        shutil.copy(SAMPLE_PLAN, plan_file)
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="test",
+            completion_criteria=[
+                CompletionCriterion("파일 존재", True),
+            ],
+        )
+        retry = ChunkRetryState()
+
+        def mock_verify(c, hc, pd, plan_path=None):
+            return ("COMPLETED", "")
+
+        def mock_build(c, pd, pp, timeout=600.0):
+            return ("PASSED", "")
+
+        result = process_chunk(
+            plan_file, chunk, HarnessConfig(), "/tmp",
+            retry, verify_fn=mock_verify, build_fn=mock_build,
+        )
+        assert result == "COMPLETED"
+
+    def test_build_failure_escalates_after_max_retries(self, tmp_path):
+        plan_file = tmp_path / "plan.md"
+        shutil.copy(SAMPLE_PLAN, plan_file)
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="test",
+            completion_criteria=[
+                CompletionCriterion("npm run build", False, build_command="npm run build"),
+            ],
+        )
+        retry = ChunkRetryState(incomplete_feedback_count=3)
+
+        def mock_build(c, pd, pp, timeout=600.0):
+            return ("FAILED", "error")
+
+        result = process_chunk(
+            plan_file, chunk, HarnessConfig(), "/tmp",
+            retry, build_fn=mock_build, feedback_fn=lambda t: True,
+        )
+        assert result == "ESCALATE"
+
 
 # ── File-based verification ──────────────────────────────────────────
 
@@ -399,6 +495,55 @@ class TestBuildSessionPrompt:
         rc = ReviewConfig(enabled=True)
         result = build_session_prompt(chunk, rc)
         assert result.startswith(original)
+
+    def test_build_notice_injected_for_build_criteria(self):
+        """[BUILD] 태그가 있는 chunk에 VM 빌드 금지 지시가 주입된다."""
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="코드를 작성하라.",
+            completion_criteria=[
+                CompletionCriterion("파일 존재", False),
+                CompletionCriterion("npm run build", False, build_command="npm run build"),
+            ],
+        )
+        result = build_session_prompt(chunk)
+        assert "VM에서 실행하지 마라" in result
+        assert "코드를 작성하라." in result
+
+    def test_no_build_notice_without_build_criteria(self):
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="코드를 작성하라.",
+            completion_criteria=[
+                CompletionCriterion("파일 존재", False),
+            ],
+        )
+        result = build_session_prompt(chunk)
+        assert "VM에서 실행하지 마라" not in result
+
+    def test_no_build_notice_when_all_builds_checked(self):
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="코드를 작성하라.",
+            completion_criteria=[
+                CompletionCriterion("npm run build", True, build_command="npm run build"),
+            ],
+        )
+        result = build_session_prompt(chunk)
+        assert "VM에서 실행하지 마라" not in result
+
+    def test_build_notice_with_review_config(self):
+        chunk = Chunk(
+            name="Test", number=1,
+            session_prompt="코드를 작성하라.",
+            completion_criteria=[
+                CompletionCriterion("npm run build", False, build_command="npm run build"),
+            ],
+        )
+        rc = ReviewConfig(enabled=True, skip_chunks=[])
+        result = build_session_prompt(chunk, review_config=rc)
+        assert "VM에서 실행하지 마라" in result
+        assert "/engineering:code-review" in result
 
 
 class TestPromoteNextPlan:

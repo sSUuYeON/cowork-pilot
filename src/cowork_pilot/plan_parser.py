@@ -18,6 +18,7 @@ class CompletionCriterion:
     """A single checkbox item under ``### Completion Criteria``."""
     description: str    # e.g. "pytest tests/test_models.py 통과"
     checked: bool       # True if [x], False if [ ]
+    build_command: str = ""  # e.g. "npm run build" (extracted from [BUILD] tag)
 
 
 @dataclass
@@ -48,6 +49,7 @@ _RE_CHUNK_HEADER = re.compile(r"^## Chunk (\d+): (.+)$")
 _RE_CHECKBOX = re.compile(r"^- \[([ x])\] (.+)$")
 _RE_TASK = re.compile(r"^- Task \d+: .+$")
 _RE_METADATA_KV = re.compile(r"^- (\w[\w_]*): (.+)$")
+_RE_BUILD_TAG = re.compile(r"^\[BUILD\]\s+(.+)$")
 
 
 # ── Parsing helpers ──────────────────────────────────────────────────
@@ -107,7 +109,10 @@ def _split_chunks(lines: list[str]) -> list[tuple[int, str, list[str]]]:
 
 
 def _parse_completion_criteria(body: list[str]) -> list[CompletionCriterion]:
-    """Parse ``- [ ]`` / ``- [x]`` lines under ``### Completion Criteria``."""
+    """Parse ``- [ ]`` / ``- [x]`` lines under ``### Completion Criteria``.
+
+    Extracts [BUILD] tag from description if present, storing it in build_command.
+    """
     criteria: list[CompletionCriterion] = []
     in_section = False
     for line in body:
@@ -121,7 +126,21 @@ def _parse_completion_criteria(body: list[str]) -> list[CompletionCriterion]:
             m = _RE_CHECKBOX.match(stripped)
             if m:
                 checked = m.group(1) == "x"
-                criteria.append(CompletionCriterion(description=m.group(2).strip(), checked=checked))
+                description = m.group(2).strip()
+
+                # Check for [BUILD] tag at the start of the description
+                build_command = ""
+                build_match = _RE_BUILD_TAG.match(description)
+                if build_match:
+                    build_command = build_match.group(1)
+                    # Strip [BUILD] tag from description
+                    description = build_command
+
+                criteria.append(CompletionCriterion(
+                    description=description,
+                    checked=checked,
+                    build_command=build_command
+                ))
     return criteria
 
 
@@ -297,3 +316,18 @@ def update_checkboxes(path: Path, chunk_number: int, criteria_indices: list[int]
         new_lines.append(line)
 
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def update_checkboxes_by_description(path: Path, chunk_number: int, description: str) -> None:
+    """Update ``- [ ]`` → ``- [x]`` for a specific criterion matched by description.
+
+    Re-parses the file to find the correct index, then delegates to update_checkboxes().
+    """
+    plan = parse_exec_plan(path)
+    for chunk in plan.chunks:
+        if chunk.number == chunk_number:
+            for i, cr in enumerate(chunk.completion_criteria):
+                if cr.description == description and not cr.checked:
+                    update_checkboxes(path, chunk_number, criteria_indices=[i])
+                    return
+            break

@@ -43,6 +43,7 @@ class HarnessConfig:
     completion_check_max_retries: int = 3
     incomplete_retry_max: int = 3
     exec_plans_dir: str = "docs/exec-plans"
+    build_timeout_seconds: float = 600.0
 
     # Session timing
     session_open_delay: float = 3.0
@@ -221,6 +222,7 @@ def load_harness_config(path: Path, base_config: Config | None = None) -> Harnes
         harness.completion_check_max_retries = h.get("completion_check_max_retries", harness.completion_check_max_retries)
         harness.incomplete_retry_max = h.get("incomplete_retry_max", harness.incomplete_retry_max)
         harness.exec_plans_dir = h.get("exec_plans_dir", harness.exec_plans_dir)
+        harness.build_timeout_seconds = h.get("build_timeout_seconds", harness.build_timeout_seconds)
 
         hs = h.get("session", {})
         harness.session_open_delay = hs.get("open_delay_seconds", harness.session_open_delay)

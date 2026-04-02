@@ -12,6 +12,7 @@ from cowork_pilot.plan_parser import (
     ExecPlan,
     parse_exec_plan,
     update_checkboxes,
+    update_checkboxes_by_description,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -290,3 +291,109 @@ class TestParseExecPlanIntegration:
         assert plan2.chunks[0].status == "completed"
         # Other chunks unchanged
         assert plan2.chunks[2].status == "pending"
+
+
+# ── BUILD tag parsing ────────────────────────────────────────────────
+
+class TestBuildTagParsing:
+    """Tests for [BUILD] tag parsing and build_command field."""
+
+    FIXTURE_BUILD = FIXTURE_DIR / "sample_exec_plan_build.md"
+
+    def test_build_command_parsed_from_tag(self):
+        """Verify [BUILD] tag is extracted into build_command field."""
+        plan = parse_exec_plan(self.FIXTURE_BUILD)
+        chunk1 = plan.chunks[0]
+
+        # Criterion 0: no [BUILD] tag
+        assert chunk1.completion_criteria[0].build_command == ""
+        assert chunk1.completion_criteria[0].description == "vercel.json 파일 존재"
+
+        # Criterion 1: [BUILD] npm run lint
+        assert chunk1.completion_criteria[1].build_command == "npm run lint"
+        assert chunk1.completion_criteria[1].description == "npm run lint"
+
+        # Criterion 2: [BUILD] npm run build
+        assert chunk1.completion_criteria[2].build_command == "npm run build"
+        assert chunk1.completion_criteria[2].description == "npm run build"
+
+    def test_build_command_empty_for_non_build(self):
+        """Verify non-[BUILD] criteria have empty build_command."""
+        plan = parse_exec_plan(self.FIXTURE_BUILD)
+        chunk2 = plan.chunks[1]
+
+        # Criterion 0: no [BUILD] tag
+        assert chunk2.completion_criteria[0].build_command == ""
+        assert chunk2.completion_criteria[0].description == "README.md 파일 존재"
+
+    def test_checked_build_preserves_command(self):
+        """Verify [BUILD] tag is preserved even when checked."""
+        plan = parse_exec_plan(self.FIXTURE_BUILD)
+        chunk2 = plan.chunks[1]
+
+        # Criterion 1 is checked and has [BUILD] tag
+        assert chunk2.completion_criteria[1].checked is True
+        assert chunk2.completion_criteria[1].build_command == "npm run test"
+        assert chunk2.completion_criteria[1].description == "npm run test"
+
+    def test_build_command_with_complex_command(self):
+        """Verify complex build commands with arguments are captured correctly."""
+        plan = parse_exec_plan(self.FIXTURE_BUILD)
+        chunk1 = plan.chunks[0]
+
+        # Complex commands should be fully captured
+        assert chunk1.completion_criteria[1].build_command == "npm run lint"
+        assert chunk1.completion_criteria[2].build_command == "npm run build"
+
+    def test_existing_fixture_backward_compatible(self):
+        """Verify existing sample_exec_plan.md (no [BUILD] tags) still works."""
+        plan = parse_exec_plan(SAMPLE_PLAN)
+        chunk1 = plan.chunks[0]
+
+        # All criteria should have empty build_command
+        for criterion in chunk1.completion_criteria:
+            assert criterion.build_command == ""
+            assert criterion.description != ""
+
+
+# ── update_checkboxes_by_description ──────────────────────────────────
+
+class TestUpdateCheckboxesByDescription:
+    """Tests for update_checkboxes_by_description() helper function."""
+
+    def test_updates_matching_description(self, tmp_path):
+        """Verify checkbox is updated when description matches exactly."""
+        import shutil
+        FIXTURE_BUILD = FIXTURE_DIR / "sample_exec_plan_build.md"
+        dest = tmp_path / "plan.md"
+        shutil.copy(FIXTURE_BUILD, dest)
+
+        # Update by description
+        update_checkboxes_by_description(dest, chunk_number=1, description="npm run lint")
+
+        # Re-parse and verify
+        plan = parse_exec_plan(dest)
+        chunk1 = plan.chunks[0]
+
+        # Criterion 1 should now be checked
+        assert chunk1.completion_criteria[1].checked is True
+        # Others unchanged
+        assert chunk1.completion_criteria[0].checked is False
+        assert chunk1.completion_criteria[2].checked is False
+
+    def test_no_match_does_nothing(self, tmp_path):
+        """Verify no changes when description doesn't match."""
+        import shutil
+        FIXTURE_BUILD = FIXTURE_DIR / "sample_exec_plan_build.md"
+        dest = tmp_path / "plan.md"
+        shutil.copy(FIXTURE_BUILD, dest)
+
+        # Try to update with non-matching description
+        update_checkboxes_by_description(dest, chunk_number=1, description="nonexistent criterion")
+
+        # Re-parse and verify nothing changed
+        plan = parse_exec_plan(dest)
+        chunk1 = plan.chunks[0]
+
+        for criterion in chunk1.completion_criteria:
+            assert criterion.checked is False

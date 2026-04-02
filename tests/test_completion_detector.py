@@ -1,6 +1,7 @@
 """Tests for completion_detector — idle detection + CLI verification."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -12,6 +13,8 @@ from cowork_pilot.completion_detector import (
     parse_verification_result,
     build_feedback_text,
     send_feedback,
+    run_local_build,
+    run_build_criteria,
 )
 from cowork_pilot.plan_parser import Chunk, CompletionCriterion
 
@@ -190,3 +193,129 @@ class TestSendFeedback:
     @patch("cowork_pilot.session_opener.build_type_prompt_script", return_value="script")
     def test_clipboard_failure(self, mock_script, mock_clip, mock_exec):
         assert send_feedback("test feedback") is False
+
+
+# ── Local build execution ────────────────────────────────────────────
+
+class TestRunLocalBuild:
+    """Tests for run_local_build()."""
+
+    @patch("cowork_pilot.completion_detector.subprocess.run")
+    def test_success(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="OK\n", stderr="")
+        success, stdout, stderr = run_local_build("npm run build", "/tmp/project")
+        assert success is True
+        assert stdout == "OK\n"
+        mock_run.assert_called_once_with(
+            "npm run build",
+            shell=True,
+            cwd="/tmp/project",
+            capture_output=True,
+            text=True,
+            timeout=600.0,
+        )
+
+    @patch("cowork_pilot.completion_detector.subprocess.run")
+    def test_failure_nonzero_exit(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Error: lint failed")
+        success, stdout, stderr = run_local_build("npm run lint", "/tmp/project")
+        assert success is False
+        assert "lint failed" in stderr
+
+    @patch("cowork_pilot.completion_detector.subprocess.run")
+    def test_timeout(self, mock_run):
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="build", timeout=600)
+        success, stdout, stderr = run_local_build("cargo build", "/tmp/project", timeout=600.0)
+        assert success is False
+        assert "timed out" in stderr.lower()
+
+    @patch("cowork_pilot.completion_detector.subprocess.run")
+    def test_os_error(self, mock_run):
+        mock_run.side_effect = OSError("No such command")
+        success, stdout, stderr = run_local_build("nonexistent", "/tmp/project")
+        assert success is False
+        assert "No such command" in stderr
+
+
+class TestRunBuildCriteria:
+    """Tests for run_build_criteria()."""
+
+    def _make_chunk(self, criteria):
+        return Chunk(
+            name="Test", number=1,
+            completion_criteria=criteria,
+            session_prompt="test",
+        )
+
+    @patch("cowork_pilot.completion_detector.run_local_build")
+    def test_no_build_criteria_returns_passed(self, mock_build):
+        """[BUILD] 태그 없으면 즉시 PASSED."""
+        chunk = self._make_chunk([
+            CompletionCriterion("파일 존재", False),
+        ])
+        status, detail = run_build_criteria(chunk, "/tmp", Path("/tmp/plan.md"))
+        assert status == "PASSED"
+        mock_build.assert_not_called()
+
+    @patch("cowork_pilot.completion_detector.run_local_build")
+    @patch("cowork_pilot.plan_parser.update_checkboxes_by_description")
+    def test_all_builds_pass(self, mock_update, mock_build):
+        """모든 [BUILD] 성공 시 PASSED + 체크박스 업데이트."""
+        mock_build.return_value = (True, "OK", "")
+        chunk = self._make_chunk([
+            CompletionCriterion("파일 존재", False),
+            CompletionCriterion("npm run lint", False, build_command="npm run lint"),
+            CompletionCriterion("npm run build", False, build_command="npm run build"),
+        ])
+        status, detail = run_build_criteria(chunk, "/tmp", Path("/tmp/plan.md"))
+        assert status == "PASSED"
+        assert mock_build.call_count == 2
+        assert mock_update.call_count == 2
+
+    @patch("cowork_pilot.completion_detector.run_local_build")
+    @patch("cowork_pilot.plan_parser.update_checkboxes_by_description")
+    def test_first_build_fails_stops_early(self, mock_update, mock_build):
+        """첫 빌드 실패 시 즉시 FAILED 반환."""
+        mock_build.return_value = (False, "", "Error: lint failed")
+        chunk = self._make_chunk([
+            CompletionCriterion("npm run lint", False, build_command="npm run lint"),
+            CompletionCriterion("npm run build", False, build_command="npm run build"),
+        ])
+        status, detail = run_build_criteria(chunk, "/tmp", Path("/tmp/plan.md"))
+        assert status == "FAILED"
+        assert "npm run lint" in detail
+        mock_build.assert_called_once()
+        mock_update.assert_not_called()
+
+    @patch("cowork_pilot.completion_detector.run_local_build")
+    def test_checked_build_skipped(self, mock_build):
+        """이미 [x]인 [BUILD] 항목은 스킵."""
+        chunk = self._make_chunk([
+            CompletionCriterion("npm run lint", True, build_command="npm run lint"),
+        ])
+        status, detail = run_build_criteria(chunk, "/tmp", Path("/tmp/plan.md"))
+        assert status == "PASSED"
+        mock_build.assert_not_called()
+
+    def test_invalid_project_dir(self):
+        """project_dir이 유효하지 않으면 FAILED."""
+        chunk = self._make_chunk([
+            CompletionCriterion("npm run build", False, build_command="npm run build"),
+        ])
+        status, detail = run_build_criteria(chunk, "", Path("/tmp/plan.md"))
+        assert status == "FAILED"
+        assert "project_dir" in detail
+
+    @patch("cowork_pilot.completion_detector.run_local_build")
+    @patch("cowork_pilot.plan_parser.update_checkboxes_by_description")
+    def test_stderr_truncated_to_2000(self, mock_update, mock_build):
+        """에러 로그가 2000자로 잘린다."""
+        long_err = "x" * 5000
+        mock_build.return_value = (False, "", long_err)
+        chunk = self._make_chunk([
+            CompletionCriterion("cargo build", False, build_command="cargo build"),
+        ])
+        status, detail = run_build_criteria(chunk, "/tmp", Path("/tmp/plan.md"))
+        assert status == "FAILED"
+        assert len(detail) < 2200
