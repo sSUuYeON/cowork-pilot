@@ -1,0 +1,58 @@
+{# Phase 5-outline: exec-plan 설계 — §5.5.1 #}
+프로젝트 경로: {{ project_dir }}
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/output-formats.md (§6 exec-plan 형식)
+- {{ project_dir }}/docs/design-docs/index.md
+- {{ project_dir }}/docs/product-specs/index.md
+- {{ project_dir }}/docs/ARCHITECTURE.md
+- {{ project_dir }}/docs/QUALITY_SCORE.md
+- {{ project_dir }}/docs/generated/analysis-report.md
+
+exec-plan의 전체 구조를 설계하라. 실제 Session Prompt 내용은 채우지 않는다.
+
+1. 구현 순서를 결정한다 (의존성 분석)
+2. exec-plan 파일 목록을 확정한다
+3. 각 exec-plan의 Chunk 목록을 확정한다:
+   - Chunk 제목
+   - Completion Criteria (구체적으로)
+   - Tasks 목록
+   - Session Prompt는 비워둔다 ("다음 세션에서 작성")
+4. 결과를 docs/generated/exec-plan-outline.md에 저장한다
+5. 파일 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+
+다음 형식으로 작성하라:
+
+## exec-plan 개요
+
+| # | 파일명 | 범위 | Chunk 수 | 의존성 |
+|---|--------|------|---------|--------|
+| 1 | 01-project-setup.md | 초기화, 설정 | 5 | 없음 |
+| 2 | 02-data-layer.md | 데이터 모델, DB | 8 | 01 |
+| ... | ... | ... | ... | ... |
+
+예상 총 Chunk 수: {N}개
+
+## 01-project-setup.md 상세
+
+### Chunk 1: {제목}
+- Completion Criteria:
+  - [ ] {조건1}
+  - [ ] {조건2}
+- Tasks:
+  - Task 1: {내용}
+  - Task 2: {내용}
+- Session Prompt: (다음 세션에서 작성)
+
+### Chunk 2: ...
+...
+
+출력 파일:
+- {{ project_dir }}/docs/generated/exec-plan-outline.md
+
+품질 규칙:
+- product-spec 본문이나 design-doc 본문은 읽지 않는다 (index가 목차 역할)
+- 의존성 분석을 기반으로 구현 순서를 결정하라
+- Completion Criteria는 구체적이고 검증 가능해야 한다
+
+완료 시 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

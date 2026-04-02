@@ -1,0 +1,25 @@
+{# Phase 4-3: 표현 품질 + QUALITY_SCORE — §5.4 #}
+프로젝트 경로: {{ project_dir }}
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/quality-criteria.md (§2~§5)
+- {{ project_dir }}/docs/generated/phase4-consistency.md (세션 4-1 결과)
+- {{ project_dir }}/docs/generated/phase4-rescore.md (세션 4-2 결과)
+
+다음을 수행하라:
+1. 모든 docs/ 파일에서 금지 표현을 grep으로 검색
+   ("적절한", "필요시", "충분한", "등등", "TBD", "추후 작성", "TODO")
+2. 위반 발견 시 즉시 수정
+3. phase4-consistency.md와 phase4-rescore.md를 종합
+4. docs/QUALITY_SCORE.md를 quality-criteria.md §5 템플릿에 따라 작성
+5. 파일 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+
+출력 파일:
+- {{ project_dir }}/docs/QUALITY_SCORE.md
+
+품질 규칙:
+- 금지 표현 목록: "적절한", "필요시", "충분한", "등등", "TBD", "추후 작성", "TODO"
+- grep을 사용하여 기계적으로 검색하라
+- quality-criteria.md §5 템플릿을 정확히 따라라
+
+완료 시 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

@@ -1,0 +1,27 @@
+{# Phase 4-2: 체크리스트 재평가 — §5.4 #}
+프로젝트 경로: {{ project_dir }}
+대상: {% for feat in features %}{{ feat.feature }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/checklists.md
+{% for feat in features %}
+- {{ project_dir }}/docs/product-specs/{{ feat.domain }}--{{ feat.feature }}.md
+- {{ project_dir }}/docs/generated/gap-reports/{{ feat.domain }}--{{ feat.feature }}.md
+{% endfor %}
+
+생성된 product-spec에 체크리스트를 재적용하라.
+
+1. docs/generated/references/checklists.md의 체크리스트로 각 product-spec을 재평가
+2. Phase 2 gap-report의 점수와 비교하여 개선/악화 확인
+3. 미흡한 항목 발견 시 즉시 수정
+4. 결과를 docs/generated/phase4-rescore.md에 저장
+5. 파일 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+
+출력 파일:
+- {{ project_dir }}/docs/generated/phase4-rescore.md
+
+품질 규칙:
+- Phase 2 gap-report와의 점수 비교를 반드시 포함하라
+- 악화된 항목이 있으면 즉시 수정하라
+
+완료 시 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

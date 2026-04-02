@@ -180,17 +180,34 @@ class JSONLTail:
 
     def read_new_lines(self) -> list[str]:
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, "rb") as f:
                 f.seek(self._offset)
-                new_content = f.read()
-                self._offset = f.tell()
+                raw = f.read()
         except (FileNotFoundError, OSError):
             return []
 
-        if not new_content:
+        if not raw:
             return []
 
-        lines = new_content.strip().split("\n")
+        # Only consume up to the last newline — anything after it
+        # is an incomplete line still being written.
+        last_nl = raw.rfind(b"\n")
+        if last_nl == -1:
+            # No complete line yet; leave offset unchanged for next call.
+            return []
+
+        complete = raw[: last_nl + 1]
+        self._offset += len(complete)
+
+        try:
+            text = complete.decode("utf-8")
+        except UnicodeDecodeError:
+            # Extremely rare: the chunk itself contains a broken sequence.
+            # Decode leniently so the loop keeps running; bad lines will
+            # be filtered out by json.loads downstream.
+            text = complete.decode("utf-8", errors="replace")
+
+        lines = text.strip().split("\n")
         return [line for line in lines if line.strip()]
 
     def switch_file(self, new_path: Path) -> None:

@@ -38,6 +38,23 @@ completion_check_max_retries = 3
 incomplete_retry_max = 3
 exec_plans_dir = "docs/exec-plans"
 
+# [docs_orchestrator]
+# idle_timeout_seconds = 120          # 초기값. 첫 3개 세션에만 적용
+# completion_poll_interval = 5.0      # 출력 파일 + 완료 마커 폴링 주기 (초)
+# idle_grace_seconds = 30             # idle 의심 후 추가 대기 시간
+# feature_bundle_threshold_lines = 200  # 기능 묶음 기준 줄 수
+# max_bundle_size = 2                 # 한 세션에 묶는 최대 기능 수
+# coverage_ratio_threshold = 0.8      # Phase 1.5 커버리지 비율 기준
+# adaptive_timeout_min = 60.0         # 적응형 타임아웃 최솟값 (초)
+# adaptive_timeout_max = 300.0        # 적응형 타임아웃 최댓값 (초)
+# adaptive_timeout_multiplier = 1.5   # 실측 평균 × 이 배수 = 새 타임아웃
+
+# [docs_orchestrator.session]
+# open_delay_seconds = 3.0
+# prompt_delay_seconds = 1.0
+# detect_timeout_seconds = 10.0
+# detect_poll_interval = 1.0
+
 [harness.session]
 open_delay_seconds = 3.0
 prompt_delay_seconds = 1.0

@@ -1,0 +1,38 @@
+{# Phase 1: 1세션 처리 (소~중규모) — §5.1 #}
+프로젝트 경로: {{ project_dir }}
+원본 기획서: {{ source_docs | join(', ') }}
+
+읽어야 할 파일:
+{% for doc in source_docs %}
+- {{ doc }}
+{% endfor %}
+- {{ project_dir }}/docs/generated/references/output-formats.md
+- {{ project_dir }}/docs/generated/references/project-conventions.md
+
+다음을 수행하라:
+1. 원본 기획서를 모두 읽는다
+2. 프로젝트 타입을 추론한다
+3. 도메인과 기능을 식별하고 분할 계획을 수립한다
+4. analysis-report.md를 작성한다
+5. domain-extracts/를 생성한다
+   - 중요: "요약"하지 말고 관련 원문을 그대로 복사하라
+   - 관련 없는 부분만 제거하라
+   - 기능별로 파일을 나눠라 (도메인/기능.md)
+   - 한 문단이 여러 기능에 관련되면 양쪽 다 복사하라 (중복 허용)
+   - 복사한 문단 앞에 <!-- SOURCE: 원본파일명#섹션 --> 주석을 달아라
+6. shared.md에는 모든 도메인이 참조하는 공통 정보를 담는다
+7. 모든 출력 파일의 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+
+출력 파일:
+- {{ project_dir }}/docs/generated/analysis-report.md
+- {{ project_dir }}/docs/generated/domain-extracts/ (도메인별/기능별 파일)
+- {{ project_dir }}/docs/generated/domain-extracts/shared.md
+
+docs/generated/references/output-formats.md와 project-conventions.md를 참고하라.
+
+품질 규칙:
+- "요약"하지 말고 원문을 그대로 복사하라
+- 모든 복사 문단 앞에 <!-- SOURCE: 원본파일명#섹션 --> 주석을 달아라
+- 각 기능별 파일은 self-contained 단위여야 한다
+
+완료 시 모든 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

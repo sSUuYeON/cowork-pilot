@@ -1,0 +1,42 @@
+{# Phase 2: manual 모드 갭 분석 — §5.2 #}
+프로젝트 경로: {{ project_dir }}
+대상 기능: {% for feat in features %}{{ feat.domain }}/{{ feat.feature }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+모드: manual
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/checklists.md
+- {{ project_dir }}/docs/generated/analysis-report.md
+- {{ project_dir }}/docs/generated/domain-extracts/shared.md
+{% for feat in features %}
+- {{ project_dir }}/docs/generated/domain-extracts/{{ feat.domain }}/{{ feat.feature }}.md
+- {{ project_dir }}/docs/generated/domain-extracts/{{ feat.domain }}/_overview.md
+{% endfor %}
+
+다음을 수행하라:
+1. 위 파일들을 읽는다
+2. docs/generated/references/checklists.md의 product-spec 체크리스트를 적용한다
+3. 미충족(1점) 항목은 사용자에게 AskUserQuestion으로 질문한다
+   - 반드시 구체적 선택지를 제시하라
+   - 에러 패스, 데이터 스키마, 성능 기준 등 빠진 것을 빠짐없이 물어라
+4. 부분 충족(2점) 항목은 구체화 방향을 제안하고 확인한다
+5. 결과를 각 기능별 gap-report 파일에 저장한다
+   - 사용자 응답의 설계 의도와 방향성도 함께 기록하라
+6. 모든 파일의 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+
+출력 파일:
+{% for feat in features %}
+- {{ project_dir }}/docs/generated/gap-reports/{{ feat.domain }}--{{ feat.feature }}.md
+{% endfor %}
+
+파일명 규칙 (매우 중요):
+- 출력 파일명에서 도메인과 기능 사이의 구분자는 반드시 하이픈 2개(--)를 사용한다.
+- 예: ai-agent--nl-parser.md (O), ai-agent-nl-parser.md (X)
+- 하이픈 2개(--)를 하이픈 1개(-)로 변경하지 마라. 파서가 깨진다.
+
+품질 규칙:
+- 체크리스트 항목을 빠짐없이 평가하라
+- 점수(1~3)를 매 항목에 부여하라
+- 사용자 응답을 정확히 기록하라
+
+완료 시 모든 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

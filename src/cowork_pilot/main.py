@@ -495,8 +495,12 @@ def cli() -> None:
     parser = argparse.ArgumentParser(description="Cowork Pilot — auto-response agent")
     parser.add_argument("--config", type=str, default="config.toml", help="Path to config file")
     parser.add_argument("--engine", type=str, choices=["codex", "claude"], help="Override engine")
-    parser.add_argument("--mode", type=str, choices=["watch", "harness", "meta"], default="watch",
-                       help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3)")
+    parser.add_argument("--mode", type=str, choices=["watch", "harness", "meta", "docs-orchestrator"], default="watch",
+                       help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3) / docs-orchestrator (auto docs generation)")
+    parser.add_argument("--docs-mode", type=str, choices=["auto", "manual"], default="auto",
+                       help="Docs-orchestrator mode: auto (AI decides) / manual (user decides). Only used with --mode docs-orchestrator")
+    parser.add_argument("--manual-override", type=str, default="",
+                       help="Comma-separated domain list for manual override in docs-orchestrator mode")
     parser.add_argument("description", nargs="?", default="",
                        help="Initial project description (meta mode only)")
     args = parser.parse_args()
@@ -514,6 +518,17 @@ def cli() -> None:
         if not meta_config.project_dir:
             meta_config.project_dir = config.project_dir
         run_meta(config, meta_config)
+    elif args.mode == "docs-orchestrator":
+        from cowork_pilot.config import load_docs_orchestrator_config
+        from cowork_pilot.docs_orchestrator import run_docs_orchestrator
+        orch_config = load_docs_orchestrator_config(Path(args.config), config)
+        # Override docs_mode and manual_override from CLI args
+        orch_config.docs_mode = args.docs_mode
+        if args.manual_override:
+            orch_config.manual_override = [
+                d.strip() for d in args.manual_override.split(",") if d.strip()
+            ]
+        run_docs_orchestrator(config, orch_config)
     elif args.mode == "harness":
         harness_config = load_harness_config(Path(args.config), config)
         run_harness(config, harness_config)

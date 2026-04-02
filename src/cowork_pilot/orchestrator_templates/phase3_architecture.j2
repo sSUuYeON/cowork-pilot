@@ -1,0 +1,41 @@
+{# Phase 3-C: ARCHITECTURE, DESIGN_GUIDE, SECURITY 생성 — §5.3 #}
+프로젝트 경로: {{ project_dir }}
+대상: ARCHITECTURE.md, DESIGN_GUIDE.md, SECURITY.md
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/output-formats.md
+- {{ project_dir }}/docs/generated/analysis-report.md
+- {{ project_dir }}/docs/generated/domain-extracts/shared.md
+- {{ project_dir }}/docs/design-docs/index.md
+- {{ project_dir }}/docs/product-specs/index.md
+{% for feat in features %}
+- {{ project_dir }}/docs/generated/domain-extracts/{{ feat.domain }}/_overview.md
+{% endfor %}
+{% if project_conventions %}
+- {{ project_conventions }}
+{% endif %}
+
+다음을 수행하라:
+
+각 문서에 대해 이 루프를 반복하라:
+  ① RE-READ: docs/generated/references/output-formats.md의 해당 문서 섹션을 다시 읽는다
+  ② RE-READ: 관련 design-docs, product-specs의 index를 다시 읽는다
+  ③ GENERATE: 문서 1개를 생성한다
+     - 입력 원문의 실제 내용을 변환한다. TBD/TODO 사용 금지
+     - GUIDE 주석 삽입 금지
+     - 디렉토리 구조, 기술 스택, 보안 정책을 구체적으로 기술한다
+  ④ VALIDATE: 방금 쓴 파일을 다시 읽어 검증한다
+     - 양식 일치, 금지 표현 부재
+  ⑤ SAVE: 검증 통과 후 저장
+
+출력 파일:
+- {{ project_dir }}/docs/ARCHITECTURE.md
+- {{ project_dir }}/docs/DESIGN_GUIDE.md
+- {{ project_dir }}/docs/SECURITY.md
+
+품질 규칙:
+- "이미 읽었으니 기억한다"는 생각을 하지 말라. 매 문서마다 반드시 RE-READ하라.
+- TBD/TODO 사용 금지. GUIDE 주석 삽입 금지.
+- 금지 표현: "적절한", "필요시", "충분한", "등등", "추후 작성"
+
+완료 시 모든 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

@@ -1,0 +1,33 @@
+{# Phase 5-detail: exec-plan 상세 작성 — §5.5.2 #}
+프로젝트 경로: {{ project_dir }}
+대상: exec-plan {{ plan_number }}-{{ plan_name }}.md
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/output-formats.md (§6 파서 호환 규칙 포함)
+- {{ project_dir }}/docs/generated/exec-plan-outline.md
+{% for spec in relevant_specs %}
+- {{ spec }}
+{% endfor %}
+
+docs/generated/exec-plan-outline.md에서 이 exec-plan의 outline을 읽고,
+각 Chunk의 Session Prompt를 채워 완성하라.
+
+각 Chunk에 대해 이 루프를 반복하라:
+  ① RE-READ: docs/generated/references/output-formats.md §6 (파서 호환 규칙 포함) 다시 읽기
+  ② GENERATE: 해당 Chunk의 Session Prompt 작성
+     - 반드시 plain triple-backtick으로 열기
+     - 중첩 코드 블록 금지
+     - Chunk 헤더 금지
+     - 끝에 Chunk 완료 워크플로 지시 포함
+  ③ VALIDATE: 방금 쓴 파일을 다시 읽어 파서 규격 검증
+  ④ SAVE: 검증 통과 후 저장
+
+출력 파일:
+- {{ project_dir }}/docs/exec-plans/planning/{{ plan_number }}-{{ plan_name }}.md
+
+품질 규칙:
+- "이미 읽었으니 기억한다"는 생각을 하지 말라. 매 Chunk마다 반드시 RE-READ하라.
+- Session Prompt는 plain triple-backtick으로 열어야 한다
+- 중첩 코드 블록 금지, Chunk 헤더 금지
+
+완료 시 최종 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

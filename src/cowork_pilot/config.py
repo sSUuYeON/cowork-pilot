@@ -78,6 +78,78 @@ class MetaConfig:
             )
 
 
+@dataclass
+class DocsOrchestratorConfig:
+    """Docs-orchestrator configuration (loaded from config.toml [docs_orchestrator])."""
+    idle_timeout_seconds: float = 120.0
+    completion_poll_interval: float = 5.0
+    idle_grace_seconds: float = 30.0
+    feature_bundle_threshold_lines: int = 200
+    max_bundle_size: int = 2
+    coverage_ratio_threshold: float = 0.8
+    adaptive_timeout_min: float = 60.0
+    adaptive_timeout_max: float = 300.0
+    adaptive_timeout_multiplier: float = 1.5
+    docs_mode: str = "auto"       # "auto" | "manual"
+    manual_override: list[str] = field(default_factory=list)
+
+    # Session timing (기존 HarnessConfig와 동일 패턴)
+    session_open_delay: float = 3.0
+    session_prompt_delay: float = 1.0
+    session_detect_timeout: float = 10.0
+    session_detect_poll_interval: float = 1.0
+
+    # Engine (main Config에서 상속)
+    engine: str = "claude"
+    engine_command: str = "claude"
+    engine_args: list[str] = field(default_factory=lambda: ["-p"])
+
+
+def load_docs_orchestrator_config(
+    path: Path, base_config: Config | None = None
+) -> DocsOrchestratorConfig:
+    """Load docs-orchestrator config from config.toml's [docs_orchestrator] section.
+
+    If ``base_config`` is provided, engine settings are inherited from it.
+    """
+    orch = DocsOrchestratorConfig()
+
+    if path.exists():
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        d = data.get("docs_orchestrator", {})
+        orch.idle_timeout_seconds = d.get("idle_timeout_seconds", orch.idle_timeout_seconds)
+        orch.completion_poll_interval = d.get("completion_poll_interval", orch.completion_poll_interval)
+        orch.idle_grace_seconds = d.get("idle_grace_seconds", orch.idle_grace_seconds)
+        orch.feature_bundle_threshold_lines = d.get("feature_bundle_threshold_lines", orch.feature_bundle_threshold_lines)
+        orch.max_bundle_size = d.get("max_bundle_size", orch.max_bundle_size)
+        orch.coverage_ratio_threshold = d.get("coverage_ratio_threshold", orch.coverage_ratio_threshold)
+        orch.adaptive_timeout_min = d.get("adaptive_timeout_min", orch.adaptive_timeout_min)
+        orch.adaptive_timeout_max = d.get("adaptive_timeout_max", orch.adaptive_timeout_max)
+        orch.adaptive_timeout_multiplier = d.get("adaptive_timeout_multiplier", orch.adaptive_timeout_multiplier)
+        orch.docs_mode = d.get("docs_mode", orch.docs_mode)
+        orch.manual_override = d.get("manual_override", orch.manual_override)
+
+        ds = d.get("session", {})
+        orch.session_open_delay = ds.get("open_delay_seconds", orch.session_open_delay)
+        orch.session_prompt_delay = ds.get("prompt_delay_seconds", orch.session_prompt_delay)
+        orch.session_detect_timeout = ds.get("detect_timeout_seconds", orch.session_detect_timeout)
+        orch.session_detect_poll_interval = ds.get("detect_poll_interval", orch.session_detect_poll_interval)
+
+    # Inherit engine settings from base config
+    if base_config is not None:
+        orch.engine = base_config.engine
+        if base_config.engine == "codex":
+            orch.engine_command = base_config.codex_command
+            orch.engine_args = base_config.codex_args or ["-q"]
+        else:
+            orch.engine_command = base_config.claude_command
+            orch.engine_args = base_config.claude_args or ["-p"]
+
+    return orch
+
+
 def load_review_config(path: Path) -> ReviewConfig:
     """Load review config from config.toml's [review] section."""
     if not path.exists():
