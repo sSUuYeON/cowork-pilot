@@ -37,7 +37,7 @@ idle_timeout_seconds = 30
 completion_check_max_retries = 3
 incomplete_retry_max = 3
 exec_plans_dir = "docs/exec-plans"
-build_timeout_seconds = 600
+build_timeout_seconds = 3000
 
 # [docs_orchestrator]
 # idle_timeout_seconds = 120          # 초기값. 첫 3개 세션에만 적용
@@ -55,6 +55,16 @@ build_timeout_seconds = 600
 # prompt_delay_seconds = 1.0
 # detect_timeout_seconds = 10.0
 # detect_poll_interval = 1.0
+
+[codex.exec]
+command = "codex"
+# extra_args only — "exec" and "--dangerously-bypass-approvals-and-sandbox"
+# are already hardcoded in exec_runner.py
+args = []
+build_timeout_seconds = 3000
+stalled_output_timeout_seconds = 600
+max_retries = 3
+build_repair_max_retries = 3
 
 [harness.session]
 open_delay_seconds = 3.0

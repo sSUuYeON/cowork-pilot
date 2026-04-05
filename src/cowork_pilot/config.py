@@ -43,7 +43,7 @@ class HarnessConfig:
     completion_check_max_retries: int = 3
     incomplete_retry_max: int = 3
     exec_plans_dir: str = "docs/exec-plans"
-    build_timeout_seconds: float = 600.0
+    build_timeout_seconds: float = 3000.0
 
     # Session timing
     session_open_delay: float = 3.0

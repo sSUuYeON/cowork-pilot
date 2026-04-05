@@ -223,6 +223,22 @@ class TestRunLocalBuild:
         assert "lint failed" in stderr
 
     @patch("cowork_pilot.completion_detector.subprocess.run")
+    def test_markdown_wrapped_command_is_normalized(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="OK\n", stderr="")
+        success, stdout, stderr = run_local_build("`npm run build`", "/tmp/project")
+        assert success is True
+        assert stdout == "OK\n"
+        assert stderr == ""
+        mock_run.assert_called_once_with(
+            "npm run build",
+            shell=True,
+            cwd="/tmp/project",
+            capture_output=True,
+            text=True,
+            timeout=600.0,
+        )
+
+    @patch("cowork_pilot.completion_detector.subprocess.run")
     def test_timeout(self, mock_run):
         import subprocess
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="build", timeout=600)

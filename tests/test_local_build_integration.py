@@ -144,6 +144,55 @@ class TestLocalBuildIntegration:
         assert "chunk-complete" in prompt
         assert "리뷰" in prompt or "review" in prompt
 
+    def test_markdown_wrapped_build_command_runs_without_shell_substitution(self, tmp_path: Path) -> None:
+        """[BUILD] 명령이 Markdown backticks로 감싸져 있어도 그대로 실행된다."""
+        plan_file = tmp_path / "test_plan.md"
+        plan_content = textwrap.dedent("""\
+            # Test Build Plan
+
+            ## Metadata
+            - project_dir: {project_dir}
+            - spec: docs/specs/test.md
+            - created: 2026-04-05
+            - status: pending
+
+            ---
+
+            ## Chunk 1: Markdown Build Command
+
+            ### Completion Criteria
+            - [ ] [BUILD] `printf 'Linting and checking validity of types'`
+
+            ### Tasks
+            - Task 1: Run markdown-wrapped build command
+
+            ### Session Prompt
+            ```
+            Complete the build tasks.
+            ```
+            """).format(project_dir=str(tmp_path))
+
+        plan_file.write_text(plan_content)
+
+        plan = parse_exec_plan(plan_file)
+        chunk = plan.chunks[0]
+
+        assert chunk.completion_criteria[0].build_command == "`printf 'Linting and checking validity of types'`"
+
+        status, detail = run_build_criteria(
+            chunk,
+            project_dir=str(tmp_path),
+            plan_path=plan_file,
+            timeout=30.0,
+        )
+
+        assert status == "PASSED"
+        assert detail == ""
+
+        plan_after = parse_exec_plan(plan_file)
+        chunk_after = plan_after.chunks[0]
+        assert chunk_after.completion_criteria[0].checked is True
+
     def test_process_chunk_build_then_verify(self, tmp_path: Path) -> None:
         """Test process_chunk workflow: build pass then verify/review cycle.
 

@@ -203,10 +203,12 @@ def run_local_build(
     Returns (success, stdout, stderr).
     """
     import sys as _sys
-    print(f"  [build] Running: {command} (cwd={project_dir})", file=_sys.stderr)
+
+    normalized_command = _normalize_build_command(command)
+    print(f"  [build] Running: {normalized_command} (cwd={project_dir})", file=_sys.stderr)
     try:
         result = subprocess.run(
-            command,
+            normalized_command,
             shell=True,
             cwd=project_dir,
             capture_output=True,
@@ -224,6 +226,23 @@ def run_local_build(
     except OSError as exc:
         print(f"  [build] ✗ OS error: {exc}", file=_sys.stderr)
         return (False, "", f"Build failed to start: {exc}")
+
+
+def _normalize_build_command(command: str) -> str:
+    """Strip Markdown-style outer backticks from [BUILD] commands.
+
+    Exec-plans are Markdown files, so it is common to write
+    ``[BUILD] `npm run build``` for readability. When passed directly to
+    ``shell=True``, those backticks trigger shell command substitution and
+    can turn the child process stdout into a new shell command. We only
+    remove a single outer pair and leave the rest of the command intact.
+    """
+    normalized = command.strip()
+    if len(normalized) >= 2 and normalized.startswith("`") and normalized.endswith("`"):
+        inner = normalized[1:-1].strip()
+        if inner and "\n" not in inner:
+            return inner
+    return normalized
 
 
 def run_build_criteria(

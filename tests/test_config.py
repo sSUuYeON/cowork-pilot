@@ -1,5 +1,6 @@
 from pathlib import Path
-from cowork_pilot.config import Config, load_config
+from cowork_pilot.codex.config import CodexExecConfig, load_codex_exec_config
+from cowork_pilot.config import Config, HarnessConfig, load_config, load_harness_config
 
 
 def test_config_defaults():
@@ -32,6 +33,36 @@ post_verify_timeout_seconds = 15.0
 def test_load_config_missing_file():
     config = load_config(Path("/nonexistent/config.toml"))
     assert config.engine == "claude"  # falls back to defaults
+
+
+def test_harness_config_defaults():
+    config = HarnessConfig()
+    assert config.build_timeout_seconds == 3000.0
+
+
+def test_load_harness_config_missing_file_uses_3000s_timeout(tmp_path):
+    config = load_harness_config(tmp_path / "nonexistent.toml")
+    assert config.build_timeout_seconds == 3000.0
+
+
+def test_codex_exec_config_defaults():
+    config = CodexExecConfig()
+    assert config.build_timeout_seconds == 3000.0
+    assert config.stalled_output_timeout_seconds == 600.0
+
+
+def test_load_codex_exec_config_from_toml(tmp_path):
+    toml_path = tmp_path / "config.toml"
+    toml_path.write_text("""
+[codex.exec]
+build_timeout_seconds = 3600
+stalled_output_timeout_seconds = 420
+max_retries = 5
+""")
+    config = load_codex_exec_config(toml_path)
+    assert config.build_timeout_seconds == 3600.0
+    assert config.stalled_output_timeout_seconds == 420.0
+    assert config.max_retries == 5
 
 
 from cowork_pilot.config import (
