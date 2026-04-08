@@ -1,0 +1,13 @@
+# Classification Review
+
+## Inputs
+- project_dir: {{ project_dir }}
+- spec_path: {{ spec_path }}
+- run_id: {{ run_id }}
+- project_mode: {{ classification.project_mode.value }}
+- size_class: {{ classification.size_class.value }}
+
+## Rationale
+{% for item in classification.rationale %}
+- {{ item }}
+{% endfor %}

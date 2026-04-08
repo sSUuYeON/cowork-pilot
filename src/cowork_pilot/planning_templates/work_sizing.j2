@@ -1,0 +1,6 @@
+# Work Sizing
+
+## Sized Items
+{% for item in sized_items %}
+- {{ item.item.key }}: complexity={{ item.complexity }}, coupling={{ item.coupling }}, uncertainty={{ item.uncertainty }}
+{% endfor %}

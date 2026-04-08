@@ -23,8 +23,10 @@ Planning Engine V3의 목적은 단순히 exec-plan outline을 생성하는 것�
 - 프로젝트 규모(`small / medium / large`)와 유형에 맞는 분해를 수행한다.
 - 문서 존재 여부뿐 아니라 제품 완결성까지 검사한다.
 - Greenfield와 Brownfield를 같은 planning core 위에서 다룬다.
+- Brownfield에서 코드를 한 번에 직접 읽지 않고, 분할 관찰 -> 관찰 합성 -> gap synthesis 흐름으로 현재 구현을 파악한다.
 - `Hybrid`를 기본 모드로 하고, `Interactive`와 `Auto`를 설정 가능하게 한다.
 - 각 planning 단계가 intermediate docs를 남기고 다음 단계가 이를 읽게 한다.
+- 기존 gap report 개념을 V3 내부의 review artifact로 흡수한다.
 - 최종적으로 parser-friendly exec-plan을 생성한다.
 - Codex CLI에서도 실행 가능한 planning 대상 계약을 가진다.
 
@@ -129,6 +131,15 @@ outline은 시작점이 아니라 후반 산출물이다. 프로젝트를 구조
 - `product_type`
 - `decision_mode`: `interactive | hybrid | auto`
 
+Brownfield에서는 분류 결과를 덮어쓰지 않고 `초기값 + 확정값`을 함께 보존한다.
+
+- `initial_size_class`
+- `initial_borderline`
+- `confirmed_size_class`
+- `confirmed_borderline`
+
+즉 Brownfield의 `size_class`와 `borderline`은 planning run의 현재 유효값을 뜻하고, run history에는 초기 provisional 판단과 observation 이후 확정 판단이 모두 남아야 한다.
+
 ### 8.2 Classification Inputs
 
 규모 판정은 감으로 하지 않는다. 다음 축을 본다.
@@ -139,7 +150,8 @@ outline은 시작점이 아니라 후반 산출물이다. 프로젝트를 구조
 - `외부 연동 수`
 - `운영/백오피스 요구 강도`
 - `비기능 요구 강도`
-- Brownfield의 경우 `변경 영향 범위`
+- Brownfield의 경우 초기 단계에서는 `change_surface_estimate`
+- Brownfield의 확정 단계에서는 `confirmed_change_impact`
 
 ### 8.3 Heuristic Rules
 
@@ -152,7 +164,7 @@ outline은 시작점이 아니라 후반 산출물이다. 프로젝트를 구조
 - 외부 연동이 거의 없거나 단순하다
 - 운영자/백오피스 요구가 낮다
 - 비기능 요구가 기본 수준이다
-- Brownfield라면 변경 영향 범위가 좁다
+- Brownfield라면 초기 추정 변경 표면이 좁다
 
 `large`의 전형적 특징:
 
@@ -160,18 +172,111 @@ outline은 시작점이 아니라 후반 산출물이다. 프로젝트를 구조
 - 외부 연동이 여러 개다
 - 운영자/백오피스 workflow가 중요하다
 - 보안/성능/감사 로그/복구 요구가 강하다
-- Brownfield라면 변경 영향 범위가 넓고 기존 구조에 파급된다
+- Brownfield라면 초기 추정 변경 표면이 넓고 기존 구조에 파급될 가능성이 높다
 
 `medium`은 둘 사이의 일반적 중간 범위다.
 
 판정은 엄격한 점수표보다 휴리스틱 우선으로 하되, intermediate doc에 근거를 남긴다.
 
-### 8.4 Reclassification Rule
+### 8.4 Classification Report Schema
+
+classification 단계는 최소 다음 형식의 intermediate output을 남겨야 한다.
+
+- `project_mode`
+- `size_class`
+- `product_type`
+- `decision_mode`
+- `axis_observations`
+  - `feature_groups`
+  - `roles`
+  - `user_flows`
+  - `integrations`
+  - `ops_complexity`
+  - `non_functional_complexity`
+  - `change_surface_estimate` (Brownfield initial)
+  - `confirmed_change_impact` (Brownfield confirmed)
+- `rationale`
+  - 최종 판정 근거 3~5줄
+- `confidence`
+  - `low | medium | high`
+- `borderline`
+  - `true | false`
+
+Brownfield 추가 필드:
+
+- `classification_snapshot_kind`
+  - `initial | confirmed`
+- `brownfield_uncertainty`
+  - `low | medium | high`
+- `requires_observation_reclassification`
+  - `true | false`
+
+즉 분류는 단순 label만 남기면 안 되고, 어떤 축이 어떤 판단에 기여했는지 구조적으로 남겨야 한다.
+
+Brownfield에서는 최소 두 개의 snapshot이 남아야 한다.
+
+- `initial`
+  - raw code 대량 분석 이전
+  - `change_surface_estimate` 기반
+- `confirmed`
+  - `Brownfield Observation Synthesis` 이후
+  - `confirmed_change_impact` 기반
+
+### 8.5 Anchor Cases
+
+엄격한 점수표 대신, 다음과 같은 anchor case를 기준선으로 둔다.
+
+`small anchor`
+
+- 역할 1개 또는 매우 단순한 2개
+- 핵심 기능군 1~3개
+- 외부 연동 0~1개
+- 운영 workflow가 거의 없음
+- 비기능 요구가 기본 수준
+- Brownfield라면 초기 추정 변경 표면이 좁음
+
+이 조합이면 거의 확실히 `small`이다.
+
+`medium anchor`
+
+- 역할 2개 이상
+- 핵심 기능군이 여러 개이지만 도메인이 폭발하지는 않음
+- 외부 연동 1~2개
+- 일부 운영/관리 화면 필요
+- 비기능 요구가 기본 이상이지만 강한 규제/감사 수준은 아님
+
+이 조합이면 기본값은 `medium`이다.
+
+`large anchor`
+
+- 역할 3개 이상 또는 역할 간 권한 차이가 큼
+- 핵심 기능군이 여러 도메인으로 나뉨
+- 외부 연동 3개 이상 또는 고위험 연동 포함
+- 운영/백오피스 workflow가 중요
+- 보안/성능/감사 로그/복구 요구가 강함
+- Brownfield라면 초기 추정 변경 표면이 넓고 기존 구조에 파급될 가능성이 큼
+
+이 조합이면 거의 확실히 `large`다.
+
+### 8.6 Borderline Rule
+
+애매한 경우는 다음 규칙을 따른다.
+
+- size가 `small`과 `medium` 사이로 흔들리면 기본값은 `medium`
+- size가 `medium`과 `large` 사이로 흔들리면 `borderline = true`를 남기고 `medium`으로 시작한다
+- Greenfield는 `Product Completeness Review` 종료 후 한 번만 재조정 가능하다
+- Brownfield는 `Brownfield Observation Synthesis` 종료 후 한 번만 재조정 가능하다
+
+즉 초기 classification은 보수적으로 중간값을 택하되, borderline 여부를 숨기지 않고 남겨야 한다.
+
+### 8.7 Reclassification Rule
 
 분류 결과는 planning 전체 동안 무한정 바꾸지 않는다.
 
 - 초기 classification 수행
-- 이후 `Product Completeness Review` 종료 후 한 번만 재조정 가능
+- Greenfield: 이후 `Product Completeness Review` 종료 후 한 번만 재조정 가능
+- Brownfield: 이후 `Brownfield Observation Synthesis` 종료 후 한 번만 재조정 가능
+- Brownfield의 경우 `initial_*`와 `confirmed_*`는 함께 보존하고, `confirmed_*`만 현재 유효값으로 승격한다
 
 ## 9. Document Model
 
@@ -188,13 +293,13 @@ outline은 시작점이 아니라 후반 산출물이다. 프로젝트를 구조
 - `docs/SECURITY.md`
 - `docs/design-docs/core-beliefs.md`
 - `docs/design-docs/data-model.md`
-- `docs/product-specs/index.md`
-- `docs/product-specs/*`
+- 스펙 색인 역할 문서 (`docs/specs/index.md` 또는 `docs/product-specs/index.md`)
+- 스펙 본문 역할 문서 (`docs/specs/*.md` 또는 `docs/product-specs/*.md`)
 - `docs/exec-plans/*` (최종 파생 출력)
 
 ### 9.2 Core Docs
 
-V3에서 무조건 있어야 하는 core docs는 다음 9개 축으로 고정한다.
+V3의 core docs는 다음 9개 축으로 고정한다.
 
 - `AGENTS.md`
 - 공식 spec 본문
@@ -203,8 +308,59 @@ V3에서 무조건 있어야 하는 core docs는 다음 9개 축으로 고정한
 - `docs/SECURITY.md`
 - `docs/design-docs/core-beliefs.md`
 - `docs/design-docs/data-model.md`
-- `docs/product-specs/index.md`
-- `docs/product-specs/*`
+- 스펙 색인 역할 문서
+- 스펙 본문 역할 문서
+
+여기서 중요한 점은 `core doc axes`와 `required set`을 구분하는 것이다.
+
+- `core doc axes`
+  - planning engine이 항상 검사해야 하는 문서 축의 전체 집합
+- `required set`
+  - 현재 `size_class + product_type + project_mode`에서 실제로 반드시 채워져야 하는 문서 집합
+
+즉, 9개 축은 planning engine의 고정 검사 프레임이지만, 모든 축이 모든 프로젝트에서 항상 `required`인 것은 아니다.
+
+기본 원칙:
+
+- `AGENTS.md`, 공식 spec 본문, 스펙 색인 역할 문서는 모든 규모에서 `required`
+- `docs/DESIGN_GUIDE.md`는 `small / medium / large` 모두에서 기본 `required`
+- `ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/design-docs/core-beliefs.md`, `docs/design-docs/data-model.md`, 스펙 본문 역할 문서는 `small`에서 `conditional`이 될 수 있음
+- `medium`과 `large`로 갈수록 위 축들은 점진적으로 `required` 범위로 올라감
+- `Brownfield`에서는 기존 canonical docs와 실제 코드 상태를 함께 보고 `required / conditional / not_applicable`를 판정함
+
+### 9.2.1 Document Role Mapping
+
+planning engine은 고정 경로 이름보다 `document_role`을 기준으로 문서를 인식한다.
+
+각 role은 최소 다음 계약을 가져야 한다.
+
+- `allowed_path_aliases`
+- `preferred_read_order`
+- `preferred_write_target`
+- `required_by_profile`
+
+예시 role:
+
+- `spec_index`
+  - aliases: `docs/specs/index.md`, `docs/product-specs/index.md`
+- `spec_documents`
+  - aliases: `docs/specs/*.md`, `docs/product-specs/*.md`
+- `architecture`
+  - aliases: `ARCHITECTURE.md`, `docs/ARCHITECTURE.md`
+- `design_guide`
+  - aliases: `docs/DESIGN_GUIDE.md`
+
+`preferred_write_target`은 `project_convention_profile`에 따라 결정한다.
+
+감지 순서:
+
+1. `config` 또는 `AGENTS.md`의 명시 override
+2. 기존 파일 레이아웃 감지
+3. default profile 적용
+
+기본 default profile은 현재 프로젝트 컨벤션과 맞는 `specs_centered`다.
+
+즉, current convention을 따르는 프로젝트는 `docs/specs/`를 정답 경로로 인정받아야 하며, `docs/product-specs/`는 대체 profile 또는 alias로 처리해야 한다.
 
 ### 9.3 Adaptive Docs
 
@@ -284,6 +440,31 @@ run 폴더 이름은 다음을 포함한다.
 - `plan-structure-draft.md`
 - `plan-review.md`
 
+조건부 intermediate docs:
+
+- `coverage-gap.md` — Greenfield 기본, Brownfield에서도 completeness 근거가 필요하면 생성 가능
+- `code-observations/` — Brownfield 기본
+- `implementation-observation-summary.md` — Brownfield 기본
+- `spec-implementation-gap.md` — Brownfield 기본
+- `change-impact-gap.md` — Brownfield 기본
+
+위 gap artifact는 별도 legacy phase를 복제하는 것이 아니라, 기존 stage가 생성하고 다음 stage가 읽는 보조 판단 문서다.
+
+### 10.4 Gap Artifacts
+
+V3는 기존 gap report 개념을 `stage-owned review artifact`로 흡수한다.
+
+원칙:
+
+- gap artifact는 독립 top-level stage가 아니라, 기존 review/structuring 단계가 남기는 conditional intermediate doc다.
+- 각 gap artifact는 어떤 입력을 비교했고, 어떤 차이/누락/과설계 후보를 발견했는지 근거를 남긴다.
+- 이후 단계는 이 문서를 읽고 scope/sizing/review에 반영해야 한다.
+
+기본 적용:
+
+- `Greenfield`: `coverage-gap.md`를 통해 빠진 설계와 과설계 후보를 잡는다
+- `Brownfield`: 먼저 `code-observations/`와 `implementation-observation-summary.md`를 만들고, 그 다음 `spec-implementation-gap.md`, `change-impact-gap.md`를 통해 현재 구현/기존 docs/새 변경의 차이를 잡는다
+
 ## 11. Pipeline
 
 Planning Engine V3의 기본 체인은 다음 10단계다.
@@ -301,19 +482,96 @@ Planning Engine V3의 기본 체인은 다음 10단계다.
 
 각 단계는 별도 intermediate doc를 남기고, 다음 단계는 이전 문서를 입력으로 읽는다.
 
+gap artifact는 위 10단계 밖의 추가 phase가 아니라, `Product Completeness Review`, `Scope Structuring`, `Plan Review`가 생성/소비하는 conditional intermediate doc다.
+
+다만 `Brownfield`에서는 `Project Classification`과 `Core Docs Check` 사이에 다음 조건부 pre-analysis sub-pipeline이 삽입된다.
+
+1. `Brownfield Code Observation Extraction` (`brownfield_code_observation_extraction`)
+2. `Brownfield Observation Synthesis` (`brownfield_observation_synthesis`)
+3. `Brownfield Gap Synthesis` (`brownfield_gap_synthesis`)
+
+이 sub-pipeline은 10단계 본체를 대체하지 않는다. 역할은 raw code를 한 번에 읽어 gap을 만드는 대신, 현재 구현 상태를 intermediate docs로 안정적으로 축약하는 것이다.
+
 ## 12. Stage Details
 
 ### 12.1 Project Classification
 
 프로젝트 유형, 규모, 역할, 연동, 운영 강도를 먼저 판정한다. 이후 review profile과 planning 강도가 이 결과에 따라 달라진다.
 
+중요:
+
+- 이 단계는 코드베이스 전체를 직접 읽어 구현 상태를 파악하는 단계가 아니다.
+- 특히 `Brownfield`에서도 classification의 책임은 어디까지나 상위 분류와 초기 planning profile 결정이다.
+- 실제 구현 상태 파악은 이 다음의 Brownfield 전용 pre-analysis sub-pipeline이 담당한다.
+
 출력:
 
 - `classification-report.md`
 
+### 12.1.1 Brownfield Code Observation Extraction (`brownfield_code_observation_extraction`)
+
+Brownfield에서는 classification 직후, 현재 코드베이스를 한 번에 읽고 gap을 뽑으려 하지 않는다. 대신 도메인/모듈/기능/entrypoint 단위로 코드를 나눠 여러 세션에서 관찰 기록을 만든다.
+
+원칙:
+
+- 각 세션은 자기 담당 slice만 읽는다.
+- 원본 코드 전체를 다시 요약하지 않고, 다음 synthesis에 필요한 관찰 사실만 남긴다.
+- 각 observation 문서는 최소 다음을 포함해야 한다.
+  - 담당 범위
+  - 실제 엔트리포인트/라우트/API
+  - 핵심 데이터 모델/상태
+  - 주요 권한/역할 분기
+  - 외부 연동 흔적
+  - 기존 spec과 달라 보이는 지점
+  - `unknowns` 또는 추가 확인 필요사항
+
+출력:
+
+- `code-observations/<slice>.md`
+
+### 12.1.2 Brownfield Observation Synthesis (`brownfield_observation_synthesis`)
+
+이 단계는 raw code를 다시 대량으로 읽지 않는다. 대신 앞 단계에서 생성된 `code-observations/` 문서들만 읽고 현재 구현 상태의 요약 스냅샷을 만든다.
+
+이 단계의 목적:
+
+- 분할 관찰 결과를 하나의 현재 시스템 그림으로 합친다
+- 중복/충돌 관찰을 정리한다
+- 아직 불명확한 영역을 `unknown`으로 명시한다
+
+즉, 이후 gap analysis는 원본 코드 전체가 아니라 이 요약 문서를 기준으로 수행한다.
+
+이 단계가 끝나면 Brownfield는 `confirmed_size_class`, `confirmed_borderline`, `confirmed_change_impact`를 계산할 수 있다. 이 값들은 초기 classification snapshot을 덮어쓰지 않고 추가 snapshot으로 남겨야 한다.
+
+출력:
+
+- `implementation-observation-summary.md`
+
+### 12.1.3 Brownfield Gap Synthesis (`brownfield_gap_synthesis`)
+
+이 단계는 기존 canonical docs, 신규 변경 요청, `implementation-observation-summary.md`를 비교해 Brownfield gap artifact를 생성한다.
+
+원칙:
+
+- `spec-implementation-gap`은 원본 코드를 한 번에 읽어서 바로 만들지 않는다.
+- 반드시 `code-observations/`와 `implementation-observation-summary.md`를 거친 뒤 생성한다.
+- 구현 상태가 불명확한 경우는 추측으로 메우지 않고 `unknown` 또는 추가 확인 필요로 남긴다.
+
+출력:
+
+- `spec-implementation-gap.md`
+- `change-impact-gap.md`
+
 ### 12.2 Core Docs Check
 
 core docs가 실제로 존재하는지, 기본 뼈대가 준비됐는지 확인한다.
+
+이 단계는 두 가지를 동시에 남겨야 한다.
+
+- `9개 core axes` 중 현재 무엇이 존재하는지
+- 현재 project에서 무엇이 실제 `required set`인지
+
+즉 “무엇을 검사하나”와 “무엇이 지금 꼭 필요한가”를 분리해서 기록해야 한다.
 
 출력:
 
@@ -330,6 +588,13 @@ core docs가 실제로 존재하는지, 기본 뼈대가 준비됐는지 확인�
 ### 12.4 Core Docs Presence Review
 
 단순 존재 여부뿐 아니라 문서가 비어 있지 않고, 책임이 겹치지 않고, 역할을 수행하는지 검토한다.
+
+또한 이 단계는 project 규모와 타입에 맞는 `required / conditional / not_applicable` 판정이 타당한지도 검토해야 한다.
+
+예:
+
+- `small` 프로젝트에서 `ARCHITECTURE.md`가 없더라도 합리적인 경우가 있을 수 있다
+- 반면 `docs/DESIGN_GUIDE.md`는 `small`에서도 기본적으로 빠지면 안 된다
 
 출력:
 
@@ -358,18 +623,103 @@ core docs가 실제로 존재하는지, 기본 뼈대가 준비됐는지 확인�
 
 - 각 항목이 무엇을 의미하는지 문서에 정의해야 한다.
 - 프로젝트 분류 결과에 따라 `required / conditional / not_applicable`로 적용 강도를 조정한다.
+- Greenfield에서는 이 단계가 `coverage-gap.md`를 생성해 빠진 설계와 과설계 후보를 남겨야 한다.
+
+이 단계는 단순 언급 여부가 아니라 coverage level을 판정해야 한다.
+
+coverage level:
+
+- `missing`
+  - 문서에 해당 항목이 없다
+- `mentioned`
+  - 항목은 언급되었지만 매우 얕고, 구현 범위나 관계가 불명확하다
+- `scoped`
+  - 범위, 목적, 연결 관계가 정의되어 있다
+- `implementation_ready`
+  - 구현 가능한 수준의 구체성이 있다
+- `not_applicable`
+  - 현재 프로젝트에는 필요하지 않다
+
+기본 원칙:
+
+- `small`에서는 모든 항목이 무조건 `implementation_ready`일 필요는 없다
+- 하지만 `required` 항목은 최소 통과선 이상이어야 한다
+- completeness review는 각 항목별로 `required minimum`을 계산해야 한다
+
+또한 `Product Completeness Review`는 규모별로 강도가 달라야 한다.
+
+- `small`
+  - 먼저 applicability를 계산해 `required subset`만 깊게 본다
+  - 나머지 항목은 `conditional` 또는 `not_applicable`로 빠르게 닫을 수 있다
+  - 즉 12개 범주 전체를 같은 깊이로 채우지 않는다
+- `medium`
+  - 대부분의 user-facing 범주를 최소 `scoped` 이상으로 요구한다
+  - 운영/비기능 범주는 조건부로 더 깊게 본다
+- `large`
+  - 12개 범주 전반을 적극적으로 평가하고, 더 많은 항목이 `implementation_ready`를 요구받는다
+
+즉 `small`에서는 “모든 매트릭스를 채운다”가 아니라, `applicability-first lightweight profile`로 planning 비용이 구현 비용을 압도하지 않게 해야 한다.
+
+예시 최소 통과선:
+
+- `페이지/기능 목록`
+  - `small`: `scoped`
+  - `medium/large`: `implementation_ready`
+- `유저플로우`
+  - `small`: `scoped`
+  - `medium/large`: `implementation_ready`
+- `기본 화면 세트`
+  - `small`: `mentioned` 또는 `scoped`
+  - `medium/large`: `scoped`
+- `외부 연동/설정 의존성`
+  - 연동이 있으면 최소 `scoped`
+  - high-risk 또는 `large`면 `implementation_ready`
+- `비기능 요구`
+  - `small`: `mentioned`
+  - `medium/large`: `scoped`
+  - security-critical면 `implementation_ready`
+
+각 completeness 항목은 최소 다음을 출력해야 한다.
+
+- `category`
+- `applicability`
+- `coverage_level`
+- `required_minimum`
+- `pass | fail`
+- `follow_up_action`
+  - `ask`
+  - `assume`
+  - `defer`
+  - `reopen`
+
+`small`에서의 최소 운영 규칙:
+
+- applicability가 `not_applicable`이면 즉시 종료 가능
+- applicability가 `conditional`이면 간단한 근거와 함께 `mentioned` 또는 `scoped` 수준으로 닫을 수 있다
+- 오직 `required subset`만 깊은 review 대상으로 삼는다
 
 출력:
 
 - `product-completeness-review.md`
+- `coverage-gap.md` (Greenfield 기본, 필요시 Brownfield도 생성 가능)
 
 ### 12.6 Scope Structuring
 
 문서를 그대로 나열하지 않고, 구현 경계와 사용자 가치 단위에 맞게 work map으로 재구성한다.
 
+Brownfield에서는 scope structuring 전에 다음 delta artifact가 준비되어야 한다.
+
+- `implementation-observation-summary.md`
+- `spec-implementation-gap.md`
+- `change-impact-gap.md`
+
+이 문서들은 분할 코드 관찰과 관찰 합성을 거쳐 만들어진 현재 구현 요약, 기존 canonical docs, 신규 변경 요청을 비교한 결과이며, scope map은 이 차이를 work item으로 번역한 결과여야 한다.
+
 출력:
 
 - `scope-map.md`
+- `spec-implementation-gap.md` (Brownfield 기본)
+- `change-impact-gap.md` (Brownfield 기본)
 
 ### 12.7 Work Sizing
 
@@ -422,6 +772,11 @@ review는 별도 단계이며, 한 세션에 몰지 않는다.
 - `executionability`: 각 plan/chunk가 실제로 실행 가능하고, 검증/완료 판정이 가능한가
 - `overdesign`: 불필요한 문서, 화면, 플로우, 분해를 억지로 넣지 않았는가
 
+review는 gap artifact를 읽고 판단해야 한다.
+
+- Greenfield review는 최소 `coverage-gap.md`를 읽고 coverage/overdesign를 판정한다
+- Brownfield review는 최소 `spec-implementation-gap.md`, `change-impact-gap.md`를 읽고 coverage/executionability/overdesign를 판정한다
+
 필요하면 review를 여러 세션으로 나눈다.
 
 출력:
@@ -457,6 +812,17 @@ Brownfield의 핵심 목표는 현재 상태를 읽고, 변경 영향만큼만 �
 - 현재 공식 spec version, 현재 docs, 실제 구현 상태, 신규 submission을 함께 읽음
 - 불필요한 전체 재기획을 피함
 - 영향 범위와 기존 구조 보존이 중요함
+- 실제 구현 상태 파악은 `코드 전체 직접 대량 분석`이 아니라 `분할 관찰 -> 관찰 합성 -> gap synthesis`로 수행함
+
+권장 흐름:
+
+1. 기존 canonical docs와 신규 변경 요청을 읽음
+2. 코드베이스를 도메인/모듈/기능 단위로 나눠 `code-observations/` 생성
+3. `implementation-observation-summary.md`로 현재 구현 상태를 합성
+4. 이를 기준으로 `spec-implementation-gap.md`, `change-impact-gap.md` 생성
+5. 그 gap artifact를 읽고 `Scope Structuring` 이후 단계 진행
+
+이 구조의 목적은 LLM이 대규모 코드베이스 전체를 한 번에 읽고 정확한 gap을 뽑아내야 하는 부담을 줄이는 데 있다.
 
 ## 14. Gap Report Reuse
 
@@ -472,6 +838,13 @@ Brownfield의 핵심 목표는 현재 상태를 읽고, 변경 영향만큼만 �
 
 - Greenfield에서는 빠진 설계와 과설계를 잡는 review artifact
 - Brownfield에서는 현재 구현/기존 docs/새 변경의 차이를 분석하는 artifact
+
+적용 방식:
+
+- `coverage gap`은 주로 `Product Completeness Review`가 생성하고 `Plan Review`가 소비한다
+- `spec-implementation gap`은 Brownfield `Code Observation Extraction -> Observation Synthesis -> Gap Synthesis`를 거친 뒤 `Scope Structuring` 입력 artifact로 생성된다
+- `change impact gap`은 Brownfield `Gap Synthesis`에서 생성되어 `Scope Structuring`과 `Work Sizing`의 입력 artifact가 된다
+- 이 artifact들은 최종적으로 `plan-review.md`와 exec-plan packing rationale에 흡수된다
 
 ## 15. Question Policy
 
@@ -525,6 +898,7 @@ planning engine의 최종 출력은 다음 세트다.
 
 - 보완/완성된 canonical docs
 - run 단위 intermediate docs
+- gap artifact set (`coverage-gap`, `spec-implementation-gap`, `change-impact-gap` 중 applicable subset)
 - parser-friendly `ExecPlanSet`
 
 최소 메타데이터:

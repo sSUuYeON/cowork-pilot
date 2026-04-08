@@ -1,0 +1,16 @@
+# Plan Review
+
+## Review
+- coverage_ok: {{ review.coverage_ok }}
+- sizing_ok: {{ review.sizing_ok }}
+- executionability_ok: {{ review.executionability_ok }}
+- overdesign_ok: {{ review.overdesign_ok }}
+
+## Findings
+{% if review.findings %}
+{% for finding in review.findings %}
+- {{ finding }}
+{% endfor %}
+{% else %}
+- none
+{% endif %}

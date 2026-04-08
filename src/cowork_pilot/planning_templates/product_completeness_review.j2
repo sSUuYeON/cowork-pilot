@@ -1,0 +1,11 @@
+# Product Completeness Review
+
+## Inputs
+- project_dir: {{ project_dir }}
+- spec_path: {{ spec_path }}
+- size_class: {{ completeness_profile.size_class.value }}
+
+## Checklist
+{% for key, status in checklist_statuses.items() %}
+- {{ key }}: {{ status }}
+{% endfor %}

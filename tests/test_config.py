@@ -1,6 +1,12 @@
+import pytest
 from pathlib import Path
 from cowork_pilot.codex.config import CodexExecConfig, load_codex_exec_config
-from cowork_pilot.config import Config, HarnessConfig, load_config, load_harness_config
+from cowork_pilot.config import (
+    Config,
+    HarnessConfig,
+    load_config,
+    load_harness_config,
+)
 
 
 def test_config_defaults():
@@ -35,6 +41,20 @@ def test_load_config_missing_file():
     assert config.engine == "claude"  # falls back to defaults
 
 
+def test_load_config_missing_engine_section_uses_claude_defaults(tmp_path):
+    toml_path = tmp_path / "config.toml"
+    toml_path.write_text(
+        """
+[watcher]
+debounce_seconds = 4.0
+"""
+    )
+
+    config = load_config(toml_path)
+    assert config.engine == "claude"
+    assert config.debounce_seconds == 4.0
+
+
 def test_harness_config_defaults():
     config = HarnessConfig()
     assert config.build_timeout_seconds == 3000.0
@@ -43,7 +63,6 @@ def test_harness_config_defaults():
 def test_load_harness_config_missing_file_uses_3000s_timeout(tmp_path):
     config = load_harness_config(tmp_path / "nonexistent.toml")
     assert config.build_timeout_seconds == 3000.0
-
 
 def test_codex_exec_config_defaults():
     config = CodexExecConfig()

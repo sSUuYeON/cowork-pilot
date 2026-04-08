@@ -179,8 +179,6 @@ def load_meta_config(path: Path) -> MetaConfig:
         approval_mode=m.get("approval_mode", "manual"),
         project_dir=m.get("project_dir", ""),
     )
-
-
 def load_config(path: Path) -> Config:
     if not path.exists():
         return Config()
@@ -188,12 +186,15 @@ def load_config(path: Path) -> Config:
     with open(path, "rb") as f:
         data = tomllib.load(f)
 
+    defaults = Config()
+    engine_section = data.get("engine", {})
+
     return Config(
-        engine=data.get("engine", {}).get("default", "codex"),
-        codex_command=data.get("engine", {}).get("codex", {}).get("command", "codex"),
-        codex_args=data.get("engine", {}).get("codex", {}).get("args"),
-        claude_command=data.get("engine", {}).get("claude", {}).get("command", "claude"),
-        claude_args=data.get("engine", {}).get("claude", {}).get("args"),
+        engine=engine_section.get("default", defaults.engine),
+        codex_command=engine_section.get("codex", {}).get("command", defaults.codex_command),
+        codex_args=engine_section.get("codex", {}).get("args"),
+        claude_command=engine_section.get("claude", {}).get("command", defaults.claude_command),
+        claude_args=engine_section.get("claude", {}).get("args"),
         debounce_seconds=data.get("watcher", {}).get("debounce_seconds", 2.0),
         poll_interval_seconds=data.get("watcher", {}).get("poll_interval_seconds", 0.5),
         post_verify_timeout_seconds=data.get("responder", {}).get("post_verify_timeout_seconds", 10.0),

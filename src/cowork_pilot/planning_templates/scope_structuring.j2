@@ -1,0 +1,6 @@
+# Scope Structuring
+
+## Scope Items
+{% for item in scope_items %}
+- {{ item.key }}: {{ item.title }} (group={{ item.dependency_group }})
+{% endfor %}

@@ -1419,6 +1419,37 @@ class TestDetermineNextStepFullFlow:
         result = _determine_next_step(state)
         assert result == "phase_5_detail:01-project-setup"
 
+    def test_phase_5_outline_done_with_no_parseable_plans_returns_done(self, tmp_path: Path):
+        """Outline complete but no parseable plan rows/headers -> done."""
+        state = _make_all_phase3_completed_state(tmp_path)
+        state = OrchestratorState(
+            current={
+                **state.current,
+                "phase": "phase_5",
+                "step": "phase_5_outline",
+                "status": "idle",
+            },
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_4_1", status="completed", completed_at="2026-04-01T14:30:00", result="success"),
+                StepStatus(step="phase_4_2", status="completed", completed_at="2026-04-01T15:00:00", result="success"),
+                StepStatus(step="phase_4_3", status="completed", completed_at="2026-04-01T15:30:00", result="success"),
+                StepStatus(step="phase_5_outline", status="completed", completed_at="2026-04-01T16:00:00", result="success"),
+            ],
+            pending=[], errors=[], mode="auto",
+            project_dir=str(tmp_path),
+        )
+
+        generated = tmp_path / "docs" / "generated"
+        generated.mkdir(parents=True, exist_ok=True)
+        outline = generated / "exec-plan-outline.md"
+        outline.write_text(
+            "# Outline\n<!-- ORCHESTRATOR:DONE -->\n",
+            encoding="utf-8",
+        )
+
+        assert _determine_next_step(state) == "done"
+
     def test_phase_5_first_detail_done_returns_second(self, tmp_path: Path):
         """First detail done → next detail."""
         state = _make_all_phase3_completed_state(tmp_path)
@@ -1724,41 +1755,73 @@ class TestPhase4To5Transition:
 
 # ── Phase 5 integration tests ────────────────────────────────────────
 
+@patch("cowork_pilot.docs_orchestrator._open_orchestrator_session")
+@patch("cowork_pilot.docs_orchestrator._wait_for_session_completion", return_value=True)
+def test_phase_5_outline_uses_outline_session(
+    mock_wait: MagicMock,
+    mock_open: MagicMock,
+    phase3_completed_state: OrchestratorState,
+    base_config: Config,
+    orch_config: DocsOrchestratorConfig,
+    tmp_path: Path,
+):
+    """Phase 5-outline opens an orchestrator session and completes from outline output."""
+    mock_open.return_value = tmp_path / "session.jsonl"
+    base_config.project_dir = str(tmp_path)
+
+    generated = tmp_path / "docs" / "generated"
+    generated.mkdir(parents=True)
+    outline = generated / "exec-plan-outline.md"
+    outline.write_text(
+        "## exec-plan 개요\n\n"
+        "| # | 파일명 | 범위 | Chunk 수 | 의존성 |\n"
+        "|---|--------|------|---------|--------|\n"
+        "| 1 | 01-project-setup.md | 초기화 | 5 | 없음 |\n"
+        "<!-- ORCHESTRATOR:DONE -->\n",
+        encoding="utf-8",
+    )
+    state_path = generated / "orchestrator-state.json"
+
+    result = _run_phase_5_outline(
+        phase3_completed_state, base_config, orch_config,
+        tmp_path, tmp_path / "sessions", state_path,
+    )
+
+    completed_steps = {s.step for s in result.completed}
+    assert "phase_5_outline" in completed_steps
+    assert result.current["status"] == "idle"
+    mock_open.assert_called_once()
+    mock_wait.assert_called_once()
+
+
+@patch("cowork_pilot.docs_orchestrator._open_orchestrator_session")
+def test_phase_5_outline_fails_when_session_open_fails(
+    mock_open: MagicMock,
+    phase3_completed_state: OrchestratorState,
+    base_config: Config,
+    orch_config: DocsOrchestratorConfig,
+    tmp_path: Path,
+):
+    """Phase 5-outline records an error if session open fails."""
+    mock_open.return_value = None
+    base_config.project_dir = str(tmp_path)
+
+    generated = tmp_path / "docs" / "generated"
+    generated.mkdir(parents=True)
+    state_path = generated / "orchestrator-state.json"
+
+    result = _run_phase_5_outline(
+        phase3_completed_state, base_config, orch_config,
+        tmp_path, tmp_path / "sessions", state_path,
+    )
+
+    completed_steps = {s.step for s in result.completed}
+    assert "phase_5_outline" not in completed_steps
+    assert result.errors
+    assert "세션 열기 실패" in result.errors[-1]["error"]
+
 
 class TestPhase5Integration:
-    @patch("cowork_pilot.docs_orchestrator._open_orchestrator_session")
-    @patch("cowork_pilot.docs_orchestrator._wait_for_session_completion", return_value=True)
-    def test_phase_5_outline_creates_outline(
-        self,
-        mock_wait: MagicMock,
-        mock_open: MagicMock,
-        phase3_completed_state: OrchestratorState,
-        base_config: Config,
-        orch_config: DocsOrchestratorConfig,
-        tmp_path: Path,
-    ):
-        """Phase 5-outline opens session and marks completed."""
-        mock_open.return_value = tmp_path / "session.jsonl"
-        base_config.project_dir = str(tmp_path)
-
-        generated = tmp_path / "docs" / "generated"
-        generated.mkdir(parents=True)
-        state_path = generated / "orchestrator-state.json"
-
-        # Simulate outline file being created by AI session
-        (generated / "exec-plan-outline.md").write_text(
-            "| 1 | 01-setup.md | Setup | 3 | - |\n<!-- ORCHESTRATOR:DONE -->",
-            encoding="utf-8",
-        )
-
-        result = _run_phase_5_outline(
-            phase3_completed_state, base_config, orch_config,
-            tmp_path, tmp_path / "sessions", state_path,
-        )
-
-        completed_steps = {s.step for s in result.completed}
-        assert "phase_5_outline" in completed_steps
-        mock_open.assert_called_once()
 
     @patch("cowork_pilot.docs_orchestrator._open_orchestrator_session")
     @patch("cowork_pilot.docs_orchestrator._wait_for_session_completion", return_value=True)

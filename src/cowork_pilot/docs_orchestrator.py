@@ -291,7 +291,11 @@ def _run_phase_0(
     # 6. Build initial state
     now = datetime.now().isoformat()
     new_state = OrchestratorState(
-        current={"phase": "phase_1", "step": "phase_1", "status": "idle"},
+        current={
+            "phase": "phase_1",
+            "step": "phase_1",
+            "status": "idle",
+        },
         project_summary={
             "type": "unknown",
             "source_docs": source_names,
@@ -1216,7 +1220,6 @@ def _run_phase_5_outline(
         "phase5_outline",
         project_dir=str(project_dir),
     )
-
     expected = _parse_expected_files(prompt)
 
     jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
@@ -1748,7 +1751,7 @@ def _update_state_running(state: OrchestratorState, step: str) -> OrchestratorSt
     """Transition current step to 'running' status."""
     phase = step.split(":")[0]
     return OrchestratorState(
-        current={"phase": phase, "step": step, "status": "running"},
+        current={**state.current, "phase": phase, "step": step, "status": "running"},
         project_summary=state.project_summary,
         completed=state.completed,
         pending=state.pending,

@@ -39,6 +39,12 @@ incomplete_retry_max = 3
 exec_plans_dir = "docs/exec-plans"
 build_timeout_seconds = 3000
 
+[planning]
+run_root = "docs/generated/planning-runs"
+default_decision_mode = "hybrid"
+default_project_mode = "greenfield"
+codex_surface_enabled = true
+
 # [docs_orchestrator]
 # idle_timeout_seconds = 120          # 초기값. 첫 3개 세션에만 적용
 # completion_poll_interval = 5.0      # 출력 파일 + 완료 마커 폴링 주기 (초)

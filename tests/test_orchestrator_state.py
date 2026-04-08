@@ -92,6 +92,21 @@ class TestSerializationRoundTrip:
         assert loaded.completed[0].marker_missing is True
         assert loaded.completed[0].actual_idle_seconds == 120.0
 
+    def test_roundtrip_preserves_current_fields(self, tmp_path: Path) -> None:
+        state = OrchestratorState(
+            current={
+                "phase": "phase_5",
+                "step": "phase_5_outline",
+                "status": "idle",
+            },
+        )
+        path = tmp_path / "state.json"
+        save_state(state, path)
+        loaded = load_state(path)
+
+        assert loaded.current["phase"] == "phase_5"
+        assert loaded.current["step"] == "phase_5_outline"
+
 
 # ── estimate_sessions ────────────────────────────────────────────────
 
@@ -284,6 +299,43 @@ class TestRecoverRunningStep:
         assert result.current["status"] == "idle"
         assert len(result.completed) == 1
         assert result.completed[0].step == "phase_2:payment:refund"
+
+    def test_phase_5_outline_recovery_uses_outline_file(self, tmp_path: Path) -> None:
+        outline = tmp_path / "docs" / "generated" / "exec-plan-outline.md"
+        outline.parent.mkdir(parents=True)
+        outline.write_text("# Outline\n<!-- ORCHESTRATOR:DONE -->\n", encoding="utf-8")
+        state = OrchestratorState(
+            current={
+                "phase": "phase_5",
+                "step": "phase_5_outline",
+                "status": "running",
+            },
+            project_dir=str(tmp_path),
+        )
+        result = recover_running_step(state, tmp_path)
+
+        assert result.current["status"] == "idle"
+        assert len(result.completed) == 1
+        assert result.completed[0].step == "phase_5_outline"
+        assert result.completed[0].result == "recovered"
+
+    def test_phase_5_outline_recovery_rejects_outline_without_done_marker(self, tmp_path: Path) -> None:
+        outline = tmp_path / "docs" / "generated" / "exec-plan-outline.md"
+        outline.parent.mkdir(parents=True)
+        outline.write_text("# Outline\n", encoding="utf-8")
+        state = OrchestratorState(
+            current={
+                "phase": "phase_5",
+                "step": "phase_5_outline",
+                "status": "running",
+            },
+            project_dir=str(tmp_path),
+        )
+        result = recover_running_step(state, tmp_path)
+
+        assert result.current["status"] == "idle"
+        assert len(result.completed) == 0
+        assert any(p["step"] == "phase_5_outline" for p in result.pending)
 
 
 # ── generate_gap_summary ─────────────────────────────────────────────
