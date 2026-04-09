@@ -3,9 +3,17 @@ from pathlib import Path
 from cowork_pilot.codex.config import CodexExecConfig, load_codex_exec_config
 from cowork_pilot.config import (
     Config,
+    PlanningConfig,
     HarnessConfig,
     load_config,
     load_harness_config,
+    load_planning_config,
+)
+from cowork_pilot.planning.runtime_models import (
+    ApprovalPolicy,
+    AssumptionScope,
+    PhaseStrategy,
+    QuestionStrategy,
 )
 
 
@@ -63,6 +71,58 @@ def test_harness_config_defaults():
 def test_load_harness_config_missing_file_uses_3000s_timeout(tmp_path):
     config = load_harness_config(tmp_path / "nonexistent.toml")
     assert config.build_timeout_seconds == 3000.0
+
+
+def test_load_planning_config_missing_file_uses_runtime_defaults(tmp_path):
+    config = load_planning_config(tmp_path / "nonexistent.toml")
+    assert config.run_root == "docs/generated/planning-runs"
+    assert config.default_decision_mode == "hybrid"
+    assert config.default_project_mode == "greenfield"
+    assert config.default_project_convention_profile == "specs_centered"
+    assert config.codex_surface_enabled is True
+    assert config.question_strategy == QuestionStrategy.FRONT_LOADED.value
+    assert config.assumption_scope == AssumptionScope.BROAD_PRODUCT_DESIGN.value
+    assert config.approval_policy == ApprovalPolicy.FINAL_DRAFT_ONLY.value
+    assert config.phase_strategy == PhaseStrategy.QUESTION_HEAVY_THEN_AUTO.value
+
+
+def test_load_planning_config_from_toml(tmp_path):
+    toml_file = tmp_path / "config.toml"
+    toml_file.write_text(
+        """
+[planning]
+run_root = "docs/generated/custom-runs"
+default_decision_mode = "manual"
+default_project_mode = "existing"
+default_project_convention_profile = "docs_centered"
+codex_surface_enabled = false
+question_strategy = "balanced"
+assumption_scope = "conservative"
+approval_policy = "section_approval"
+phase_strategy = "evenly_distributed"
+"""
+    )
+
+    config = load_planning_config(toml_file)
+    assert config.run_root == "docs/generated/custom-runs"
+    assert config.default_decision_mode == "manual"
+    assert config.default_project_mode == "existing"
+    assert config.default_project_convention_profile == "docs_centered"
+    assert config.codex_surface_enabled is False
+    assert config.question_strategy == "balanced"
+    assert config.assumption_scope == "conservative"
+    assert config.approval_policy == "section_approval"
+    assert config.phase_strategy == "evenly_distributed"
+
+
+def test_checked_in_planning_config_matches_canonical_defaults():
+    repo_config = load_planning_config(Path("config.toml"))
+    defaults = PlanningConfig()
+    assert repo_config == defaults
+    assert repo_config.question_strategy == QuestionStrategy.FRONT_LOADED.value
+    assert repo_config.assumption_scope == AssumptionScope.BROAD_PRODUCT_DESIGN.value
+    assert repo_config.approval_policy == ApprovalPolicy.FINAL_DRAFT_ONLY.value
+    assert repo_config.phase_strategy == PhaseStrategy.QUESTION_HEAVY_THEN_AUTO.value
 
 def test_codex_exec_config_defaults():
     config = CodexExecConfig()

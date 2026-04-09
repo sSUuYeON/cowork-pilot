@@ -1,0 +1,82 @@
+[
+  {
+    "stage": "brownfield_code_observation_extraction",
+    "dispatch_index": 2,
+    "outputs": [
+      "code-observations/domain_module_bundles-slice-1.md"
+    ]
+  },
+  {
+    "stage": "brownfield_code_observation_extraction",
+    "dispatch_index": 3,
+    "outputs": [
+      "code-observations/domain_module_bundles-slice-2.md"
+    ]
+  },
+  {
+    "stage": "brownfield_observation_synthesis",
+    "dispatch_index": 4,
+    "outputs": [
+      "implementation-observation-summary.md"
+    ]
+  },
+  {
+    "stage": "brownfield_gap_synthesis",
+    "dispatch_index": 5,
+    "outputs": [
+      "spec-implementation-gap.md",
+      "change-impact-gap.md"
+    ]
+  },
+  {
+    "stage": "core_docs_presence_review",
+    "dispatch_index": 8,
+    "outputs": [
+      "agents",
+      "spec_index",
+      "design_guide",
+      "architecture",
+      "security",
+      "spec_documents",
+      "core_beliefs",
+      "data_model"
+    ]
+  },
+  {
+    "stage": "scope_structuring",
+    "dispatch_index": 9,
+    "outputs": [
+      "planning-scope"
+    ]
+  },
+  {
+    "stage": "scope_structuring",
+    "dispatch_index": 10,
+    "outputs": [
+      "planning-scope"
+    ]
+  },
+  {
+    "stage": "plan_review",
+    "dispatch_index": 13,
+    "outputs": [
+      "missing plan coverage for docs/specs/index.md",
+      "missing plan coverage for change-impact-gap.md",
+      "plan decomposition is too wide for the current scope"
+    ]
+  },
+  {
+    "stage": "plan_review",
+    "dispatch_index": 14,
+    "outputs": [
+      "missing plan coverage for docs/specs/index.md",
+      "missing plan coverage for change-impact-gap.md",
+      "plan decomposition is too wide for the current scope"
+    ]
+  },
+  {
+    "stage": "exec_plan_skeleton",
+    "dispatch_index": 15,
+    "outputs": []
+  }
+]

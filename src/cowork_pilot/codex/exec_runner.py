@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from cowork_pilot.codex.command_builder import build_exec_command as _build_exec_command
+from cowork_pilot.codex.event_stream import summarize_codex_event as _summarize_codex_event
 from cowork_pilot.plan_parser import (
     ExecPlan,
     Chunk,
@@ -86,33 +88,6 @@ def default_prompt_builder(chunk: Chunk, project_dir: str) -> str:
     return header + chunk.session_prompt
 
 
-def _build_exec_command(
-    prompt: str,
-    project_dir: str,
-    *,
-    codex_command: str = "codex",
-    codex_extra_args: list[str] | None = None,
-) -> list[str]:
-    """Build the subprocess argv for ``codex exec``."""
-    cmd = [
-        codex_command,
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-C",
-        project_dir,
-    ]
-    if codex_extra_args:
-        for arg in codex_extra_args:
-            if arg not in cmd:
-                cmd.append(arg)
-    if "--json" not in cmd:
-        cmd.append("--json")
-
-    # Pass the prompt directly as the positional PROMPT argument.
-    cmd.append(prompt)
-    return cmd
-
-
 def _build_subprocess_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     """Ensure child processes inherit a sane PATH even if shell init is broken."""
     env = dict(base_env or os.environ)
@@ -153,80 +128,6 @@ def _truncate_text(text: str, limit: int = _EVENT_TEXT_SNIPPET_CHARS) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
-
-
-def _summarize_codex_event(payload: dict) -> tuple[list[str], str]:
-    """Convert a Codex JSONL event into human-readable log lines."""
-    event_type = payload.get("type", "unknown")
-    lines: list[str] = []
-    last_message = ""
-
-    if event_type == "thread.started":
-        thread_id = payload.get("thread_id", "")
-        if thread_id:
-            lines.append(f"thread started: {thread_id}")
-        return (lines, last_message)
-
-    if event_type == "turn.started":
-        lines.append("turn started")
-        return (lines, last_message)
-
-    if event_type == "turn.completed":
-        usage = payload.get("usage", {})
-        if usage:
-            input_tokens = usage.get("input_tokens")
-            output_tokens = usage.get("output_tokens")
-            cached_input_tokens = usage.get("cached_input_tokens")
-            parts = []
-            if input_tokens is not None:
-                parts.append(f"in={input_tokens}")
-            if cached_input_tokens is not None:
-                parts.append(f"cached={cached_input_tokens}")
-            if output_tokens is not None:
-                parts.append(f"out={output_tokens}")
-            if parts:
-                lines.append("turn completed: " + ", ".join(parts))
-            else:
-                lines.append("turn completed")
-        else:
-            lines.append("turn completed")
-        return (lines, last_message)
-
-    if not event_type.startswith("item."):
-        lines.append(f"{event_type}: {_truncate_text(json.dumps(payload, ensure_ascii=False))}")
-        return (lines, last_message)
-
-    item = payload.get("item", {})
-    item_type = item.get("type", "unknown")
-    item_status = item.get("status") or ("completed" if event_type == "item.completed" else "in_progress")
-
-    if item_type == "agent_message":
-        text = (item.get("text") or "").strip()
-        if text:
-            last_message = text
-            prefix = "assistant" if event_type == "item.completed" else "assistant started"
-            lines.append(f"{prefix}: {_truncate_text(text)}")
-        return (lines, last_message)
-
-    if item_type == "command_execution":
-        command = item.get("command", "")
-        if event_type == "item.started":
-            lines.append(f"command started: {command}")
-        else:
-            exit_code = item.get("exit_code")
-            lines.append(
-                f"command {item_status} (rc={exit_code}): {command}"
-            )
-            output = (item.get("aggregated_output") or "").strip()
-            if output:
-                lines.append(f"command output: {_truncate_text(output)}")
-        return (lines, last_message)
-
-    summary_bits = [item_type]
-    if item_status:
-        summary_bits.append(str(item_status))
-    lines.append("item " + " ".join(summary_bits))
-    return (lines, last_message)
 
 
 def _record_codex_stdout_line(

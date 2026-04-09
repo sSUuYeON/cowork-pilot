@@ -30,6 +30,7 @@ from cowork_pilot.orchestrator_state import (
     compute_adaptive_timeout,
     estimate_sessions,
     generate_gap_summary,
+    get_planning_runtime_state,
     load_state,
     recover_running_step,
     save_state,
@@ -1389,6 +1390,9 @@ def _run_final_completion(
     print(f"  Errors: {total_errors}", file=sys.stderr)
     print(f"  Marker-missing warnings: {marker_missing_count}", file=sys.stderr)
     print(f"  Exec-plan files: {len(planning_files)}", file=sys.stderr)
+    runtime_state = get_planning_runtime_state(project_dir)
+    if runtime_state:
+        print(f"  Planning runtime state: {runtime_state}", file=sys.stderr)
 
     if planning_files:
         for pf in planning_files:

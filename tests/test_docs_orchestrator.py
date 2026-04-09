@@ -1932,6 +1932,30 @@ class TestFinalCompletion:
             _run_final_completion(state, tmp_path)
             mock_notify.assert_called_once_with(1, 0, 0)
 
+    def test_final_completion_reports_planning_runtime_state(self, tmp_path: Path, capsys):
+        planning_dir = tmp_path / "docs" / "exec-plans" / "planning"
+        planning_dir.mkdir(parents=True)
+        (planning_dir / "01-setup.md").write_text("# Plan 1\n", encoding="utf-8")
+
+        run_dir = tmp_path / "docs" / "generated" / "planning-runs" / "greenfield-cli-planning"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run-state.json").write_text(
+            '{"state": "waiting_for_input"}\n',
+            encoding="utf-8",
+        )
+
+        state = OrchestratorState(
+            completed=[StepStatus(step="phase_5_outline", status="completed", completed_at="2026-04-01T16:00:00", result="success")],
+            errors=[],
+            project_dir=str(tmp_path),
+        )
+
+        with patch("cowork_pilot.docs_orchestrator._notify_completion"):
+            _run_final_completion(state, tmp_path)
+
+        captured = capsys.readouterr()
+        assert "Planning runtime state: waiting_for_input" in captured.err
+
     def test_all_completed_state_returns_done(self, tmp_path: Path):
         """Verify that a fully completed state returns 'done'."""
         state = _make_all_phase3_completed_state(tmp_path)

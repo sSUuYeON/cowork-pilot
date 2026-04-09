@@ -140,6 +140,26 @@ def save_state(state: OrchestratorState, path: Path) -> None:
         json.dump(_state_to_dict(state), f, ensure_ascii=False, indent=2)
 
 
+def get_planning_runtime_state(project_dir: Path) -> str:
+    """Return the latest planning runtime state if one exists."""
+    run_root = project_dir / "docs" / "generated" / "planning-runs"
+    if not run_root.exists():
+        return ""
+
+    candidates = sorted(run_root.glob("*/run-state.json"))
+    if not candidates:
+        return ""
+
+    latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    try:
+        with open(latest, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return ""
+    state = payload.get("state", "")
+    return str(state) if state else ""
+
+
 # ── Session estimation ───────────────────────────────────────────────
 
 

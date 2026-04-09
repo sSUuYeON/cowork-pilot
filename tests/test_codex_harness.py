@@ -37,6 +37,45 @@ def test_build_exec_command_passes_prompt_as_argument():
         "/usr/local/bin/codex",
         "exec",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "-C",
+        "/tmp/project",
+        "--json",
+        "hello world",
+    ]
+
+
+def test_build_exec_command_preserves_bypass_flag_and_deduplicates_json():
+    cmd = _build_exec_command(
+        "hello world",
+        "/tmp/project",
+        codex_extra_args=["--json", "--json"],
+    )
+
+    assert cmd == [
+        "codex",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "-C",
+        "/tmp/project",
+        "--json",
+        "hello world",
+    ]
+
+
+def test_build_exec_command_keeps_non_json_duplicate_looking_tokens():
+    cmd = _build_exec_command(
+        "hello world",
+        "/tmp/project",
+        codex_extra_args=["exec", "exec"],
+    )
+
+    assert cmd == [
+        "codex",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
         "-C",
         "/tmp/project",
         "--json",

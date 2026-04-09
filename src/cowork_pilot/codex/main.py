@@ -3,6 +3,8 @@
 Usage:
     cowork-pilot-codex exec <plan_path> [--project-dir <dir>] [--dry-run]
     cowork-pilot-codex harness [--exec-plans-dir <dir>] [--project-dir <dir>] [--dry-run]
+    cowork-pilot-codex planning [--project-dir <dir>] [--project-mode <mode>] [--request <text>]
+        [--request-file <path>] [--change-request <text>] [--change-request-file <path>]
 """
 from __future__ import annotations
 
@@ -186,6 +188,35 @@ def cli() -> None:
         help="Preview execution without running codex exec",
     )
 
+    planning_parser = subparsers.add_parser(
+        "planning",
+        help="Run planning runtime",
+    )
+    planning_parser.add_argument(
+        "--project-dir", type=str, default="",
+        help="Project working directory (default: cwd)",
+    )
+    planning_parser.add_argument(
+        "--project-mode", type=str, choices=["greenfield", "brownfield"], default="",
+        help="Planning mode override (optional)",
+    )
+    planning_parser.add_argument(
+        "--request", type=str, default="",
+        help="Planning request text override (optional)",
+    )
+    planning_parser.add_argument(
+        "--request-file", type=str, default="",
+        help="Path to a planning request file override (optional)",
+    )
+    planning_parser.add_argument(
+        "--change-request", type=str, default="",
+        help="Brownfield change-request text override (optional)",
+    )
+    planning_parser.add_argument(
+        "--change-request-file", type=str, default="",
+        help="Path to a brownfield change-request file override (optional)",
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -199,6 +230,13 @@ def cli() -> None:
         sys.exit(exit_code)
     elif args.command == "harness":
         exit_code = asyncio.run(_run_harness(args))
+        sys.exit(exit_code)
+    elif args.command == "planning":
+        try:
+            exit_code = asyncio.run(_run_planning(args))
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
         sys.exit(exit_code)
 
 
@@ -233,6 +271,43 @@ async def _run_harness(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     return 0 if success else 1
+
+
+async def _run_planning(args: argparse.Namespace) -> int:
+    from cowork_pilot.config import load_config, load_planning_config
+    from cowork_pilot.planning.input_contract import resolve_planning_input_bundle
+    from cowork_pilot.planning.models import PlanningContext
+    from cowork_pilot.planning.runner import run_planning_pipeline
+    from cowork_pilot.planning.storage import bootstrap_run_dir, create_run_id
+
+    base_config = load_config(Path(args.config))
+    project_dir = Path(args.project_dir) if args.project_dir else Path(base_config.project_dir)
+    planning_config = load_planning_config(Path(args.config))
+    run_root = project_dir / planning_config.run_root
+    input_bundle = resolve_planning_input_bundle(
+        project_dir=project_dir,
+        project_mode_arg=getattr(args, "project_mode", ""),
+        request_arg=getattr(args, "request", ""),
+        request_file_arg=getattr(args, "request_file", ""),
+        change_request_arg=getattr(args, "change_request", ""),
+        change_request_file_arg=getattr(args, "change_request_file", ""),
+    )
+    run_id = create_run_id(input_bundle.project_mode.value, "codex-planning")
+    run_dir = bootstrap_run_dir(run_root, run_id)
+    run_planning_pipeline(
+        PlanningContext(
+            run_dir=run_dir,
+            project_dir=project_dir,
+            target_version="codex-planning",
+            mode=input_bundle.project_mode,
+            explicit_mode=input_bundle.explicit_mode,
+            request_text=input_bundle.request_text,
+            request_source=input_bundle.request_source,
+            change_request_text=input_bundle.change_request_text,
+            change_request_source=input_bundle.change_request_source,
+        )
+    )
+    return 0
 
 
 if __name__ == "__main__":

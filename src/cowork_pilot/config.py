@@ -9,6 +9,13 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
+from cowork_pilot.planning.runtime_models import (
+    ApprovalPolicy,
+    AssumptionScope,
+    PhaseStrategy,
+    QuestionStrategy,
+)
+
 
 @dataclass
 class Config:
@@ -77,6 +84,19 @@ class MetaConfig:
             self.brief_template_dir = str(
                 Path(__file__).parent / "brief_templates"
             )
+
+
+@dataclass
+class PlanningConfig:
+    run_root: str = "docs/generated/planning-runs"
+    default_decision_mode: str = "hybrid"
+    default_project_mode: str = "greenfield"
+    default_project_convention_profile: str = "specs_centered"
+    codex_surface_enabled: bool = True
+    question_strategy: str = QuestionStrategy.FRONT_LOADED.value
+    assumption_scope: str = AssumptionScope.BROAD_PRODUCT_DESIGN.value
+    approval_policy: str = ApprovalPolicy.FINAL_DRAFT_ONLY.value
+    phase_strategy: str = PhaseStrategy.QUESTION_HEAVY_THEN_AUTO.value
 
 
 @dataclass
@@ -179,6 +199,34 @@ def load_meta_config(path: Path) -> MetaConfig:
         approval_mode=m.get("approval_mode", "manual"),
         project_dir=m.get("project_dir", ""),
     )
+
+
+def load_planning_config(path: Path) -> PlanningConfig:
+    """Load planning config from config.toml's [planning] section."""
+    if not path.exists():
+        return PlanningConfig()
+
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    p = data.get("planning", {})
+    defaults = PlanningConfig()
+    return PlanningConfig(
+        run_root=p.get("run_root", defaults.run_root),
+        default_decision_mode=p.get("default_decision_mode", defaults.default_decision_mode),
+        default_project_mode=p.get("default_project_mode", defaults.default_project_mode),
+        default_project_convention_profile=p.get(
+            "default_project_convention_profile",
+            defaults.default_project_convention_profile,
+        ),
+        codex_surface_enabled=p.get("codex_surface_enabled", defaults.codex_surface_enabled),
+        question_strategy=p.get("question_strategy", defaults.question_strategy),
+        assumption_scope=p.get("assumption_scope", defaults.assumption_scope),
+        approval_policy=p.get("approval_policy", defaults.approval_policy),
+        phase_strategy=p.get("phase_strategy", defaults.phase_strategy),
+    )
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         return Config()

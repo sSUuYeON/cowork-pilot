@@ -1,0 +1,120 @@
+{
+  "state": "failed",
+  "exit_code": 127,
+  "stage": "classification",
+  "planning_context": {
+    "run_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
+    "project_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
+    "target_version": "",
+    "mode": "",
+    "explicit_mode": false,
+    "request_text": "",
+    "request_source": "",
+    "change_request_text": "",
+    "change_request_source": ""
+  },
+  "next_dispatch_index": 0,
+  "pipeline_snapshot": {
+    "classification_snapshot": {
+      "project_mode": "brownfield",
+      "size_class": "medium",
+      "product_type": "brownfield-service",
+      "confidence": "medium",
+      "borderline": true,
+      "axis_observations": {
+        "feature_groups": 1,
+        "roles": 2,
+        "user_flows": 1,
+        "integrations": 1,
+        "change_surface_estimate": "medium",
+        "source_material_only": false,
+        "has_existing_code": true,
+        "canonical_spec_count": 0,
+        "document_roles": [
+          "agents",
+          "architecture",
+          "core_beliefs",
+          "data_model",
+          "design_guide",
+          "security",
+          "spec_documents",
+          "spec_index"
+        ]
+      },
+      "rationale": [
+        "score=10 derived from feature/role/flow/integration estimates",
+        "brownfield_change_impact=medium",
+        "project_mode=brownfield"
+      ],
+      "classification_snapshot_kind": "confirmed",
+      "initial_size_class": "medium",
+      "confirmed_size_class": "medium",
+      "initial_borderline": true,
+      "confirmed_borderline": true,
+      "confirmed_change_impact": "medium",
+      "brownfield_uncertainty": "medium",
+      "requires_observation_reclassification": false
+    },
+    "core_docs": [
+      "agents",
+      "spec_index",
+      "design_guide",
+      "architecture",
+      "security",
+      "spec_documents"
+    ],
+    "adaptive_docs": [
+      "core_beliefs",
+      "data_model"
+    ],
+    "scope_map": {
+      "planning-scope": [
+        "agents",
+        "spec_index",
+        "design_guide",
+        "architecture",
+        "security",
+        "spec_documents",
+        "core_beliefs",
+        "data_model",
+        "brownfield-gap-analysis"
+      ]
+    },
+    "work_items": [
+      "planning-scope:agents",
+      "planning-scope:spec_index",
+      "planning-scope:design_guide",
+      "planning-scope:architecture",
+      "planning-scope:security",
+      "planning-scope:spec_documents",
+      "planning-scope:core_beliefs",
+      "planning-scope:data_model",
+      "planning-scope:brownfield-gap-analysis"
+    ],
+    "packed_plans": [
+      "chunk:planning-scope:agents",
+      "chunk:planning-scope:spec_index",
+      "chunk:planning-scope:design_guide",
+      "chunk:planning-scope:architecture",
+      "chunk:planning-scope:security",
+      "chunk:planning-scope:spec_documents",
+      "chunk:planning-scope:core_beliefs",
+      "chunk:planning-scope:data_model",
+      "chunk:planning-scope:brownfield-gap-analysis"
+    ],
+    "review_notes": [
+      "missing plan coverage for docs/specs/index.md",
+      "missing plan coverage for change-impact-gap.md",
+      "plan decomposition is too wide for the current scope"
+    ],
+    "gap_artifacts": {
+      "spec-implementation-gap.md": [
+        "docs/specs/index.md"
+      ],
+      "change-impact-gap.md": [
+        "change-impact-gap.md"
+      ]
+    },
+    "exec_plan_path": ""
+  }
+}

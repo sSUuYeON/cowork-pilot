@@ -43,7 +43,12 @@ build_timeout_seconds = 3000
 run_root = "docs/generated/planning-runs"
 default_decision_mode = "hybrid"
 default_project_mode = "greenfield"
+default_project_convention_profile = "specs_centered"
 codex_surface_enabled = true
+question_strategy = "front_loaded"
+assumption_scope = "broad_product_design"
+approval_policy = "final_draft_only"
+phase_strategy = "question_heavy_then_auto"
 
 # [docs_orchestrator]
 # idle_timeout_seconds = 120          # 초기값. 첫 3개 세션에만 적용

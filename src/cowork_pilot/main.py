@@ -488,6 +488,50 @@ def run_harness(
             time.sleep(config.poll_interval_seconds)
 
 
+def run_planning_mode(
+    config_path: Path,
+    *,
+    project_mode: str = "",
+    request: str = "",
+    request_file: str = "",
+    change_request: str = "",
+    change_request_file: str = "",
+) -> None:
+    from cowork_pilot.config import load_planning_config
+    from cowork_pilot.planning.input_contract import resolve_planning_input_bundle
+    from cowork_pilot.planning.models import PlanningContext
+    from cowork_pilot.planning.runner import run_planning_pipeline
+    from cowork_pilot.planning.storage import bootstrap_run_dir, create_run_id
+
+    base_config = load_config(config_path)
+    planning_config = load_planning_config(config_path)
+    project_dir = Path(base_config.project_dir)
+    run_root = project_dir / planning_config.run_root
+    input_bundle = resolve_planning_input_bundle(
+        project_dir=project_dir,
+        project_mode_arg=project_mode,
+        request_arg=request,
+        request_file_arg=request_file,
+        change_request_arg=change_request,
+        change_request_file_arg=change_request_file,
+    )
+    run_id = create_run_id(input_bundle.project_mode.value, "cli-planning")
+    run_dir = bootstrap_run_dir(run_root, run_id)
+    run_planning_pipeline(
+        PlanningContext(
+            run_dir=run_dir,
+            project_dir=project_dir,
+            target_version="cli-planning",
+            mode=input_bundle.project_mode,
+            explicit_mode=input_bundle.explicit_mode,
+            request_text=input_bundle.request_text,
+            request_source=input_bundle.request_source,
+            change_request_text=input_bundle.change_request_text,
+            change_request_source=input_bundle.change_request_source,
+        )
+    )
+
+
 def cli() -> None:
     """Entry point for `cowork-pilot` command."""
     import argparse
@@ -495,12 +539,32 @@ def cli() -> None:
     parser = argparse.ArgumentParser(description="Cowork Pilot — auto-response agent")
     parser.add_argument("--config", type=str, default="config.toml", help="Path to config file")
     parser.add_argument("--engine", type=str, choices=["codex", "claude"], help="Override engine")
-    parser.add_argument("--mode", type=str, choices=["watch", "harness", "meta", "docs-orchestrator"], default="watch",
-                       help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3) / docs-orchestrator (auto docs generation)")
+    parser.add_argument("--mode", type=str, choices=["watch", "harness", "meta", "docs-orchestrator", "planning"], default="watch",
+                       help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3) / docs-orchestrator (auto docs generation) / planning (runtime handoff)")
     parser.add_argument("--docs-mode", type=str, choices=["auto", "manual"], default="auto",
                        help="Docs-orchestrator mode: auto (AI decides) / manual (user decides). Only used with --mode docs-orchestrator")
     parser.add_argument("--manual-override", type=str, default="",
                        help="Comma-separated domain list for manual override in docs-orchestrator mode")
+    parser.add_argument("--project-mode", type=str, choices=["greenfield", "brownfield"], default="",
+                       help="Planning mode override (only used with --mode planning)")
+    parser.add_argument("--request", type=str, default="",
+                       help="Planning request text override (only used with --mode planning)")
+    parser.add_argument("--request-file", type=str, default="",
+                       help="Path to a planning request file override (only used with --mode planning)")
+    parser.add_argument("--change-request", type=str, default="",
+                       help="Brownfield change-request text override (only used with --mode planning)")
+    parser.add_argument("--change-request-file", type=str, default="",
+                       help="Path to a brownfield change-request file override (only used with --mode planning)")
+    parser.add_argument("--planning-subcommand", type=str, choices=["run", "resume"], default="run",
+                       help="Planning subcommand: run (default) / resume (only used with --mode planning)")
+    parser.add_argument("--run-dir", type=str, default="",
+                       help="Path to an existing planning run directory (only used with --mode planning --planning-subcommand resume)")
+    parser.add_argument("--response", type=str, default="",
+                       help="Response text for resume (only used with --mode planning --planning-subcommand resume)")
+    parser.add_argument("--response-kind", type=str, choices=["answer", "approval"], default="answer",
+                       help="Response kind for resume (only used with --mode planning --planning-subcommand resume)")
+    parser.add_argument("--estimate", action="store_true", default=False,
+                       help="Print session estimate and exit (only used with --mode planning)")
     parser.add_argument("description", nargs="?", default="",
                        help="Initial project description (meta mode only)")
     args = parser.parse_args()
@@ -532,6 +596,54 @@ def cli() -> None:
     elif args.mode == "harness":
         harness_config = load_harness_config(Path(args.config), config)
         run_harness(config, harness_config)
+    elif args.mode == "planning":
+        try:
+            if args.estimate:
+                from cowork_pilot.planning.estimation import estimate_sessions
+
+                mode = args.project_mode or "greenfield"
+                estimate = estimate_sessions(
+                    mode=mode,
+                    size_class="medium",
+                    feature_count=5,
+                    domain_count=3,
+                )
+                print(f"Estimated sessions: {estimate.total_sessions}")
+                print(f"  Stage sessions: {estimate.stage_sessions}")
+                print(f"  Skeleton sessions: {estimate.skeleton_sessions}")
+                print(f"  Feature outline sessions: {estimate.feature_outline_sessions}")
+                print(f"  Detail sessions: {estimate.detail_sessions}")
+                print(f"  Time range: {estimate.time_range_minutes[0]}-{estimate.time_range_minutes[1]} min")
+                if args.planning_subcommand != "resume":
+                    sys.exit(0)
+
+            if args.planning_subcommand == "resume":
+                from cowork_pilot.planning.runner import resume_planning_pipeline
+
+                if not args.run_dir:
+                    print("Error: --run-dir is required for planning resume", file=sys.stderr)
+                    sys.exit(2)
+                run_dir = Path(args.run_dir)
+                response_text = args.response or ""
+                response_kind = args.response_kind or "answer"
+                result = resume_planning_pipeline(
+                    run_dir=run_dir,
+                    response_text=response_text,
+                    response_kind=response_kind,
+                )
+                print(f"Resume complete: state={result.runtime_state}")
+            else:
+                run_planning_mode(
+                    Path(args.config),
+                    project_mode=args.project_mode,
+                    request=args.request,
+                    request_file=args.request_file,
+                    change_request=args.change_request,
+                    change_request_file=args.change_request_file,
+                )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
     else:
         run(config)
 
