@@ -15,11 +15,27 @@ def _append_markdown_line(path: Path, line: str) -> None:
         handle.write(f"{line}\n")
 
 
+_PENDING_KEYS = ("pending_event_id", "pending_question", "pending_approval")
+_WAITING_STATES = {"waiting_for_input", "waiting_for_approval"}
+
+
+def _normalize_pending_keys(state: str, metadata: dict[str, object]) -> dict[str, object]:
+    """Strip pending_* keys when state is not a waiting state.
+
+    This is the single enforcement point for the cleanup rule:
+    pending payload must only exist while the run is waiting.
+    """
+    if state in _WAITING_STATES:
+        return metadata
+    return {k: v for k, v in metadata.items() if k not in _PENDING_KEYS}
+
+
 def write_run_state(run_dir: Path, *, state: str, metadata: dict[str, object]) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
+    cleaned = _normalize_pending_keys(state, metadata)
     payload = {
         "state": state,
-        **metadata,
+        **cleaned,
     }
     (run_dir / "run-state.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

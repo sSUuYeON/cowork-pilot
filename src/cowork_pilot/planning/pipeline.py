@@ -144,11 +144,11 @@ def build_stage_dispatch_plan(
     return tuple(dispatches)
 
 
-def continue_planning_stage_graph(*, run_dir: Path) -> PlanningPipelineResult:
+def continue_planning_stage_graph(*, run_dir: Path, interactive: bool = False) -> PlanningPipelineResult:
     pipeline_state = read_pipeline_state(run_dir)
     start_index = int(pipeline_state.get("next_dispatch_index", 0))
     restored_context = _restore_context_from_pipeline_state(run_dir)
-    return _run_planning_stage_graph(restored_context, start_index=start_index)
+    return _run_planning_stage_graph(restored_context, start_index=start_index, interactive=interactive)
 
 
 def load_planning_pipeline_result_from_run_dir(run_dir: Path) -> PlanningPipelineResult:
@@ -174,14 +174,20 @@ def load_planning_pipeline_result_from_run_dir(run_dir: Path) -> PlanningPipelin
 
 def run_planning_stage_graph(
     context: PlanningContext | None = None,
+    interactive: bool = False,
 ) -> PlanningPipelineResult:
-    return _run_planning_stage_graph(context if context is not None else PlanningContext(), start_index=0)
+    return _run_planning_stage_graph(
+        context if context is not None else PlanningContext(),
+        start_index=0,
+        interactive=interactive,
+    )
 
 
 def _run_planning_stage_graph(
     context: PlanningContext,
     *,
     start_index: int,
+    interactive: bool = False,
 ) -> PlanningPipelineResult:
     runtime = _initialize_runtime(context)
 
@@ -297,6 +303,11 @@ def _run_planning_stage_graph(
             stage=dispatch.stage,
             prompt=stage_prompt,
             project_dir=runtime.project_dir,
+        )
+        stage_result = stage_executor.resolve_blocking_interactions(
+            run_dir=runtime.run_dir,
+            stage_result=stage_result,
+            interactive=interactive,
         )
         if stage_result.runtime_state in _STOP_STATES and stage_result.completed_stage is None:
             _persist_runtime_state(runtime, next_dispatch_index=dispatch_index)

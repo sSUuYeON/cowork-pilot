@@ -1,0 +1,23 @@
+완료 프로토콜:
+1. 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+2. 메시지 끝에 다음 형식의 이벤트 번들을 emit하라:
+
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: {{ stage }}
+event_id: {{ stage }}-done
+reason: stage completed successfully
+summary: (작업 요약을 한 줄로)
+outputs:
+  - {{ output_file }}
+</COWORK_PILOT_EVENT>
+
+진행 중 질문이 필요하면 INPUT_REQUIRED, 승인이 필요하면 APPROVAL_REQUIRED,
+더 이상 진행 불가하면 NEEDS_HUMAN 타입을 사용하라.
+각 이벤트에는 type, stage, event_id, reason 필드가 반드시 포함되어야 한다.
+
+도구 세션 규칙:
+- 단발성 읽기/조회 명령만 일반 exec_command 세션으로 실행하라
+- 나중에 write_stdin으로 polling, 추가 입력, Ctrl-C 중단을 보낼 가능성이 있는 명령은 처음부터 exec_command(..., tty=true)로 실행하라
+- tty=true 없이 연 세션에는 write_stdin을 보내지 마라
+- pytest, dev server, watch, tail, REPL 같은 장시간 명령은 interactive session으로 취급하라

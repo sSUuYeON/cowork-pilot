@@ -1,0 +1,32 @@
+{# exec_plan_detail — chunk별 session prompt 작성 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+대상 plan: {{ substage }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. exec-plan-outline.md를 읽고 해당 plan의 chunk 목록을 확인한다
+2. 각 chunk에 대해 session prompt를 작성한다:
+   - AI 세션이 읽어야 할 파일 목록
+   - 수행할 작업의 단계별 지시
+   - 예상 출력물
+   - 검증 방법
+3. session prompt는 해당 chunk만으로 완결되어야 한다 — 다른 chunk의 context에 의존하지 마라
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- session prompt는 self-contained이어야 한다
+- "이전 chunk에서 만든 것을 참고하라" 대신 구체적 파일 경로를 명시하라
+- completion criteria와 session prompt가 일관되어야 한다
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

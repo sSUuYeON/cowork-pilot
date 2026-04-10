@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cowork_pilot.codex.event_stream import extract_thread_id
-from cowork_pilot.planning.codex_bridge import run_cli_resume, run_exec_resume, run_exec_stage
+from cowork_pilot.planning.codex_bridge import run_exec_resume, run_exec_stage
 from cowork_pilot.planning.models import PlanningContext, PlanningPipelineResult, PlanningStage
 from cowork_pilot.planning import stage_executor
 from cowork_pilot.planning.pipeline import (
@@ -27,8 +27,12 @@ _WAITING_RESUME_STATES = {
 }
 
 
-def run_planning_pipeline(context: PlanningContext | None = None) -> PlanningPipelineResult:
-    return run_planning_stage_graph(context)
+def run_planning_pipeline(
+    context: PlanningContext | None = None,
+    *,
+    interactive: bool = False,
+) -> PlanningPipelineResult:
+    return run_planning_stage_graph(context, interactive=interactive)
 
 
 def resume_planning_pipeline(
@@ -36,10 +40,15 @@ def resume_planning_pipeline(
     run_dir: Path,
     response_text: str = "",
     response_kind: str = "answer",
+    interactive: bool = False,
 ) -> PlanningPipelineResult:
     """Public API for resuming a waiting planning pipeline.
 
-    This is the function called by the CLI `planning resume` command.
+    This is the function called by the CLI ``planning resume`` command.
+
+    When *interactive* is True and *response_text* is empty, the function
+    prompts the user in the current terminal for the pending question /
+    approval before resuming.
     """
     run_state = read_run_state(run_dir)
     current_state = str(run_state.get("state", ""))
@@ -48,14 +57,27 @@ def resume_planning_pipeline(
         PlanningRuntimeState.WAITING_FOR_INPUT.value,
         PlanningRuntimeState.WAITING_FOR_APPROVAL.value,
     }:
+        # Interactive path: prompt in terminal when no explicit response given
+        if not response_text and interactive:
+            from cowork_pilot.planning.terminal_ui import prompt_for_pending_response
+
+            terminal_response = prompt_for_pending_response(run_dir)
+            if terminal_response is not None:
+                response_text = terminal_response.text
+                response_kind = terminal_response.kind
+            else:
+                # User cancelled — return current state
+                return load_planning_pipeline_result_from_run_dir(run_dir)
+
         return resume_planning_pipeline_with_user_response(
             run_dir=run_dir,
             response_text=response_text,
             response_kind=response_kind,
+            interactive=interactive,
         )
 
     # Not waiting — try continuing from checkpoint
-    return continue_planning_stage_graph(run_dir=run_dir)
+    return continue_planning_stage_graph(run_dir=run_dir, interactive=interactive)
 
 
 def resume_planning_pipeline_with_user_response(
@@ -63,12 +85,21 @@ def resume_planning_pipeline_with_user_response(
     run_dir: Path,
     response_text: str,
     response_kind: str,
+    interactive: bool = False,
 ) -> PlanningPipelineResult:
     resumed_stage = stage_executor.resume_stage_subsession(
         run_dir=run_dir,
         response_text=response_text,
         response_kind=response_kind,
     )
+
+    # If stage returned another blocking question, try to resolve interactively
+    resumed_stage = stage_executor.resolve_blocking_interactions(
+        run_dir=run_dir,
+        stage_result=resumed_stage,
+        interactive=interactive,
+    )
+
     if resumed_stage.runtime_state in {
         PlanningRuntimeState.WAITING_FOR_INPUT.value,
         PlanningRuntimeState.WAITING_FOR_APPROVAL.value,
@@ -79,7 +110,7 @@ def resume_planning_pipeline_with_user_response(
         return load_planning_pipeline_result_from_run_dir(run_dir)
 
     advance_pipeline_state(run_dir)
-    return continue_planning_stage_graph(run_dir=run_dir)
+    return continue_planning_stage_graph(run_dir=run_dir, interactive=interactive)
 
 
 def _persist_resume_metadata(
@@ -173,78 +204,15 @@ def resume_planning_waiting_run_with_cli(
     response_text: str,
     response_kind: str,
 ):
-    run_state = read_run_state(run_dir)
-    resume_handle = str(run_state["resume_handle"])
-    stage = str(run_state.get("stage", ""))
-    pending_event_id = str(
-        run_state.get("pending_event_id", run_state.get("event_id", "resume-1"))
-    )
-    resume_ref = ResumeHandleRef(
-        surface="exec",
-        resume_handle_kind=str(run_state.get("resume_handle_kind", "codex_thread_id")),
-        resume_handle=resume_handle,
-        stage=stage,
-        substage=str(run_state.get("substage", "")),
-    )
+    """Deprecated — delegates to ``stage_executor.resume_stage_subsession``.
 
-    preserved_metadata = {
-        key: value
-        for key, value in run_state.items()
-        if key != "state"
-    }
-
-    write_run_state(
-        run_dir,
-        state=PlanningRuntimeState.RUNNING_CLI.value,
-        metadata={**preserved_metadata, "surface": "cli"},
-    )
-    run_cli_resume(
-        resume_handle=resume_handle,
-        project_dir=str(run_dir),
-        run_dir=str(run_dir),
-    )
-
-    if response_kind == "approval":
-        append_approval_decision(run_dir, event_id=pending_event_id, decision=response_text)
-        resumed_prompt = f"Approval resolved for {pending_event_id}: {response_text}"
-    else:
-        append_answer(run_dir, event_id=pending_event_id, answer=response_text)
-        resumed_prompt = f"Answer recorded for {pending_event_id}: {response_text}"
-
-    write_run_state(
-        run_dir,
-        state=PlanningRuntimeState.RUNNING_EXEC.value,
-        metadata={**preserved_metadata, "surface": "exec"},
-    )
-    exec_result = run_exec_resume(
-        resume_handle=resume_handle,
-        prompt=resumed_prompt,
-        run_dir=str(run_dir),
-    )
-    if exec_result.exit_code != 0:
-        update = apply_subprocess_failure(
-            run_dir=run_dir,
-            current_state=PlanningRuntimeState.RUNNING_EXEC,
-            exit_code=exec_result.exit_code,
-            stage=stage,
-        )
-        _persist_resume_metadata(
-            run_dir=run_dir,
-            state=update.state,
-            resume_ref=resume_ref,
-            surface="exec",
-        )
-        return update
-
-    update = apply_marker_bundle_to_run(
+    Kept for backward-compatibility with existing callers / tests.
+    Uses exec-resume only (no RUNNING_CLI intermediate).
+    """
+    result = stage_executor.resume_stage_subsession(
         run_dir=run_dir,
-        current_state=PlanningRuntimeState.RUNNING_EXEC,
-        message=exec_result.assistant_message,
+        response_text=response_text,
+        response_kind=response_kind,
     )
-    _persist_resume_metadata(
-        run_dir=run_dir,
-        state=update.state,
-        resume_ref=resume_ref,
-        surface="exec",
-    )
-    return update
+    from cowork_pilot.planning.runtime_orchestrator import RuntimeUpdate
+    return RuntimeUpdate(state=PlanningRuntimeState(result.runtime_state))

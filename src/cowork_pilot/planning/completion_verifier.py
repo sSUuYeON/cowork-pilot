@@ -16,30 +16,18 @@ _FORBIDDEN_SCOPE_DOMAINS = frozenset({
     "security", "core_beliefs", "data_model", "spec_documents",
 })
 
-# Maps stage -> required top-level JSON keys (parsed from completion_predicate)
-_STAGE_REQUIRED_KEYS: dict[PlanningStage, tuple[str, ...]] = {
-    PlanningStage.CLASSIFICATION: (
-        "project_mode", "product_type", "size_class",
-        "core_user_flows", "primary_entities", "risks",
-    ),
-    PlanningStage.CORE_DOCS_CHECK: (
-        "required_doc_roles", "resolved_existing_paths",
-        "missing_roles", "substitutions",
-    ),
-    PlanningStage.ADAPTIVE_DOCS_SELECTION: (
-        "selected_paths", "selected_roles",
-        "selection_reasons", "rejected_candidates",
-    ),
-    PlanningStage.SCOPE_STRUCTURING: (
-        "domains", "features", "user_flows", "out_of_scope",
-    ),
-    PlanningStage.WORK_SIZING: ("work_items",),
-    PlanningStage.PLAN_PACKING: ("plans",),
-    PlanningStage.PLAN_REVIEW: (
-        "issues", "rollback_recommended", "coverage_status",
-        "execution_risks", "missing_work_items",
-    ),
-}
+from cowork_pilot.planning.prompts import _STAGE_CONTRACTS
+
+
+def _get_required_keys(stage: PlanningStage) -> tuple[str, ...] | None:
+    """Derive required JSON keys from _STAGE_CONTRACTS (single source of truth).
+
+    Returns None if the stage has no required JSON keys (empty json_keys tuple).
+    """
+    contract = _STAGE_CONTRACTS.get(stage)
+    if contract is None or not contract.json_keys:
+        return None
+    return contract.json_keys
 
 
 @dataclass(frozen=True)
@@ -90,7 +78,7 @@ def verify_stage_completion(
         )
 
     # 3. JSON block parse
-    required_keys = _STAGE_REQUIRED_KEYS.get(stage)
+    required_keys = _get_required_keys(stage)
     if required_keys is not None:
         data = extract_json_block(content)
         if data is None:

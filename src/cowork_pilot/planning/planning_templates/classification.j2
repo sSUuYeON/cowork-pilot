@@ -1,0 +1,37 @@
+{# classification — 프로젝트 분류 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. 읽어야 할 파일을 모두 읽는다
+2. 프로젝트의 입력 소스(기획서, README, 기존 코드 등)를 파악한다
+3. project_mode를 판단한다 (greenfield / brownfield)
+   - 기존 소스 코드가 있으면 brownfield, 없으면 greenfield
+4. product_type 후보를 나열하고, 근거를 들어 하나를 선택한다
+   - 예: webapp, api, cli, library, mobile, monorepo
+5. size_class를 판단한다
+   - 기준: 기능 수, 예상 파일 수, 도메인 복잡도
+   - small: 기능 5개 이하, medium: 6~15개, large: 16개 이상
+   - 반드시 판단 근거를 명시하라
+6. core_user_flows를 식별한다 — 사용자 관점의 핵심 시나리오 3~7개
+7. primary_entities를 식별한다 — 핵심 데이터 모델/개체
+8. risks를 식별한다 — 기술적 위험, 불확실한 영역, 의존성 위험
+9. 위 결과를 fenced JSON 블록으로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- size_class는 반드시 근거(기능 수, 복잡도)와 함께 판단하라. 감으로 쓰지 마라
+- core_user_flows는 "로그인" 같은 한 단어가 아니라 "사용자가 이메일로 회원가입하고 프로필을 설정한다" 수준으로 작성하라
+- 이 stage에서는 scope, plan, work item을 생성하지 마라 — 오직 분류만 하라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

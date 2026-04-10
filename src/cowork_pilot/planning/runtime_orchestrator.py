@@ -88,6 +88,14 @@ def apply_marker_bundle_to_run(
             )
             if blocking and state is PlanningRuntimeState.RUNNING_EXEC:
                 state = PlanningRuntimeState.WAITING_FOR_INPUT
+                last_metadata["pending_event_id"] = marker.event_id
+                last_metadata["pending_question"] = {
+                    "event_id": marker.event_id,
+                    "question": str(marker.payload["question"]),
+                    "options": [str(x) for x in marker.payload.get("options", [])],
+                    "recommended": str(marker.payload.get("recommended", "")),
+                    "blocking": True,
+                }
 
         elif marker.type == "APPROVAL_REQUIRED":
             blocking = bool(marker.payload["blocking"])
@@ -99,6 +107,12 @@ def apply_marker_bundle_to_run(
             )
             if blocking and state is PlanningRuntimeState.RUNNING_EXEC:
                 state = PlanningRuntimeState.WAITING_FOR_APPROVAL
+                last_metadata["pending_event_id"] = marker.event_id
+                last_metadata["pending_approval"] = {
+                    "event_id": marker.event_id,
+                    "subject": str(marker.payload["subject"]),
+                    "blocking": True,
+                }
 
         elif marker.type == "ASSUMPTION_LOG":
             append_assumption(

@@ -1,7 +1,7 @@
 {
   "context": {
-    "run_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
-    "project_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
+    "run_dir": "/Users/yeonsu/autoagent/cowork-pilot",
+    "project_dir": "/Users/yeonsu/autoagent/cowork-pilot",
     "target_version": "",
     "mode": "",
     "explicit_mode": false,

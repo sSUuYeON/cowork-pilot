@@ -1,0 +1,31 @@
+{# adaptive_docs_selection — 추가 문서 선별 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. classification-report.md와 core-docs-check.md를 읽는다
+2. core docs 외에 추가로 읽어야 할 문서를 선별한다
+   - 프로젝트 크기, 유형, 복잡도에 따라 판단
+   - 디스크에 실제 존재하는 파일만 선택하라
+3. 각 선택에 대해 selection_reasons에 "왜 이 문서가 필요한가"를 명시한다
+4. 검토했으나 선택하지 않은 후보를 rejected_candidates에 기록한다
+   - 탈락 이유를 간단히 명시하라
+5. 위 결과를 fenced JSON 블록으로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- core-docs-check.md에서 이미 resolved된 core docs를 반복하지 마라 — 추가/조건부 문서만 다루라
+- 존재하지 않는 파일을 selected_paths에 넣지 마라
+- scope나 plan 관련 내용을 생성하지 마라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

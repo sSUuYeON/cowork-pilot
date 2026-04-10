@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cowork_pilot.codex.event_stream import extract_thread_id
-from cowork_pilot.planning.codex_bridge import run_cli_resume, run_exec_resume, run_exec_stage
+from cowork_pilot.planning.codex_bridge import run_exec_resume, run_exec_stage
 from cowork_pilot.planning.marker_protocol import MarkerEnvelope, extract_terminal_marker_bundle
 from cowork_pilot.planning.models import PlanningStage
 from cowork_pilot.planning.question_policy import can_use_assumption
@@ -48,6 +48,22 @@ class AssumptionRecord:
 
 
 @dataclass(frozen=True)
+class PendingQuestion:
+    event_id: str
+    question: str
+    options: tuple[str, ...]
+    recommended: str
+    blocking: bool
+
+
+@dataclass(frozen=True)
+class PendingApproval:
+    event_id: str
+    subject: str
+    blocking: bool
+
+
+@dataclass(frozen=True)
 class StageExecutionResult:
     runtime_state: str
     completed_stage: str | None
@@ -57,6 +73,8 @@ class StageExecutionResult:
     queued_questions: tuple[QueuedQuestion, ...]
     queued_approvals: tuple[QueuedApproval, ...]
     assumption_records: tuple[AssumptionRecord, ...]
+    pending_question: PendingQuestion | None = None
+    pending_approval: PendingApproval | None = None
 
 
 def execute_stage_subsession(
@@ -156,20 +174,7 @@ def resume_stage_subsession(
         substage=str(run_state.get("substage", "")),
     )
 
-    write_run_state(
-        run_dir,
-        state=PlanningRuntimeState.RUNNING_CLI.value,
-        metadata={
-            **{key: value for key, value in run_state.items() if key != "state"},
-            "surface": "cli",
-        },
-    )
-    run_cli_resume(
-        resume_handle=resume_handle,
-        project_dir=str(run_dir),
-        run_dir=str(run_dir),
-    )
-
+    # Record the user response in audit logs
     if response_kind == "approval":
         append_approval_decision(run_dir, event_id=pending_event_id, decision=response_text)
         response_line = f"Approval resolved for {pending_event_id}: {response_text}"
@@ -177,8 +182,13 @@ def resume_stage_subsession(
         append_answer(run_dir, event_id=pending_event_id, answer=response_text)
         response_line = f"Answer recorded for {pending_event_id}: {response_text}"
 
+    # Build resume prompt from persisted context + response
     resume_context = _load_resume_context(run_dir)
-    resumed_prompt = "\n".join([resume_context, response_line]).strip()
+    resumed_prompt = "\n\n".join(
+        part for part in [resume_context, response_line] if part.strip()
+    ).strip()
+
+    # Transition directly to RUNNING_EXEC (no RUNNING_CLI intermediate)
     write_run_state(
         run_dir,
         state=PlanningRuntimeState.RUNNING_EXEC.value,
@@ -296,6 +306,35 @@ def _build_stage_result(
         if marker.type == "APPROVAL_REQUIRED"
     )
     stage_complete = next((marker for marker in reversed(markers) if marker.type == "STAGE_COMPLETE"), None)
+
+    # Build in-memory pending payload for interactive loop consumption
+    pending_question: PendingQuestion | None = None
+    pending_approval: PendingApproval | None = None
+    if update_state is PlanningRuntimeState.WAITING_FOR_INPUT:
+        blocking_q = next(
+            (m for m in reversed(markers) if m.type == "INPUT_REQUIRED" and bool(m.payload["blocking"])),
+            None,
+        )
+        if blocking_q is not None:
+            pending_question = PendingQuestion(
+                event_id=blocking_q.event_id,
+                question=str(blocking_q.payload["question"]),
+                options=tuple(str(x) for x in blocking_q.payload.get("options", [])),
+                recommended=str(blocking_q.payload.get("recommended", "")),
+                blocking=True,
+            )
+    elif update_state is PlanningRuntimeState.WAITING_FOR_APPROVAL:
+        blocking_a = next(
+            (m for m in reversed(markers) if m.type == "APPROVAL_REQUIRED" and bool(m.payload["blocking"])),
+            None,
+        )
+        if blocking_a is not None:
+            pending_approval = PendingApproval(
+                event_id=blocking_a.event_id,
+                subject=str(blocking_a.payload["subject"]),
+                blocking=True,
+            )
+
     return StageExecutionResult(
         runtime_state=update_state.value,
         completed_stage=stage_complete.stage if stage_complete is not None else None,
@@ -309,6 +348,8 @@ def _build_stage_result(
         queued_questions=queued_questions,
         queued_approvals=queued_approvals,
         assumption_records=assumption_records,
+        pending_question=pending_question,
+        pending_approval=pending_approval,
     )
 
 
@@ -389,3 +430,50 @@ def _load_resume_context(run_dir: Path) -> str:
         if content:
             sections.append(f"{name}:\n{content}")
     return "\n\n".join(sections)
+
+
+# ---------------------------------------------------------------------------
+# Interactive blocking-interaction loop
+# ---------------------------------------------------------------------------
+
+def resolve_blocking_interactions(
+    *,
+    run_dir: Path,
+    stage_result: StageExecutionResult,
+    interactive: bool,
+) -> StageExecutionResult:
+    """Consume blocking questions/approvals in the current terminal.
+
+    When *interactive* is True and *stage_result* indicates a waiting state
+    (with no completed stage yet), prompt the user in the same terminal and
+    feed the answer back via ``resume_stage_subsession``.  Repeats until the
+    stage completes, fails, or the user cancels (EOF / Ctrl-C).
+
+    Non-interactive callers get the original *stage_result* back unchanged.
+    """
+    from cowork_pilot.planning.terminal_ui import prompt_from_stage_result
+
+    result = stage_result
+    while (
+        interactive
+        and result.runtime_state in {
+            PlanningRuntimeState.WAITING_FOR_INPUT.value,
+            PlanningRuntimeState.WAITING_FOR_APPROVAL.value,
+        }
+        and result.completed_stage is None
+    ):
+        terminal_response = prompt_from_stage_result(
+            pending_question=getattr(result, "pending_question", None),
+            pending_approval=getattr(result, "pending_approval", None),
+        )
+        if terminal_response is None:
+            # User cancelled — return current waiting state
+            return result
+
+        result = resume_stage_subsession(
+            run_dir=run_dir,
+            response_text=terminal_response.text,
+            response_kind=terminal_response.kind,
+        )
+
+    return result

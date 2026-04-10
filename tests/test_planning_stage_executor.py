@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cowork_pilot.planning.codex_bridge import ExecStageResult, ResumeStageResult
+from cowork_pilot.planning.codex_bridge import ExecStageResult
 from cowork_pilot.planning.models import PlanningStage
 from cowork_pilot.planning.prompts import render_stage_prompt
 from cowork_pilot.planning.runtime_models import PlanningRuntimeState
@@ -71,11 +71,6 @@ def test_resume_stage_subsession_rehydrates_persisted_context_into_resume_prompt
         "- [old-assumption] confidence=medium impact=low dashboard\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "cowork_pilot.planning.stage_executor.run_cli_resume",
-        lambda **kwargs: ResumeStageResult(event_lines=[], assistant_message="", exit_code=0),
-    )
-
     captured_prompt: dict[str, str] = {}
 
     def fake_run_exec_resume(**kwargs):
@@ -128,7 +123,7 @@ def test_render_stage_prompt_supports_explicit_read_sets_and_handoff_summary(
     assert "scope_structuring" in prompt
     assert "inputs/normalized-request.md" in prompt
     assert "previous handoff summary" in prompt
-    assert "authoritative boundary" in prompt
+    assert "다음을 수행하라" in prompt
 
 
 def test_execute_stage_subsession_preserves_existing_continuation_metadata(
@@ -201,3 +196,97 @@ def test_render_stage_prompt_for_exec_plan_feature_outline():
 def test_render_stage_prompt_for_exec_plan_detail():
     prompt = render_stage_prompt(PlanningStage.EXEC_PLAN_DETAIL, substage="02-auth-flow")
     assert "02-auth-flow" in prompt
+
+
+def test_resume_stage_subsession_uses_exec_resume_only(tmp_path: Path, monkeypatch):
+    """resume_stage_subsession should call run_exec_resume directly (no run_cli_resume)."""
+    write_run_state(
+        tmp_path,
+        state=PlanningRuntimeState.WAITING_FOR_INPUT.value,
+        metadata={
+            "resume_handle": "thread-999",
+            "resume_handle_kind": "codex_thread_id",
+            "surface": "exec",
+            "stage": PlanningStage.SCOPE_STRUCTURING.value,
+            "substage": "",
+            "pending_event_id": "ss-1",
+        },
+    )
+    exec_resume_called = {"count": 0}
+
+    def fake_run_exec_resume(**kwargs):
+        exec_resume_called["count"] += 1
+        return ExecStageResult(
+            event_lines=[],
+            assistant_message="""
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: scope_structuring
+event_id: ss-2
+reason: complete
+summary: done
+outputs:
+  - scope-map.md
+</COWORK_PILOT_EVENT>
+""".strip(),
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(
+        "cowork_pilot.planning.stage_executor.run_exec_resume",
+        fake_run_exec_resume,
+    )
+
+    result = resume_stage_subsession(
+        run_dir=tmp_path,
+        response_text="approved",
+        response_kind="answer",
+    )
+
+    assert exec_resume_called["count"] == 1
+    assert result.runtime_state == PlanningRuntimeState.RUNNING_EXEC.value
+    # Answer log should be written
+    assert "ss-1" in (tmp_path / "answer-log.md").read_text(encoding="utf-8")
+
+
+def test_resume_stage_subsession_records_approval_log(tmp_path: Path, monkeypatch):
+    write_run_state(
+        tmp_path,
+        state=PlanningRuntimeState.WAITING_FOR_APPROVAL.value,
+        metadata={
+            "resume_handle": "thread-888",
+            "resume_handle_kind": "codex_thread_id",
+            "surface": "exec",
+            "stage": PlanningStage.PLAN_REVIEW.value,
+            "substage": "",
+            "pending_event_id": "pr-1",
+        },
+    )
+    monkeypatch.setattr(
+        "cowork_pilot.planning.stage_executor.run_exec_resume",
+        lambda **kwargs: ExecStageResult(
+            event_lines=[],
+            assistant_message="""
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: plan_review
+event_id: pr-2
+reason: complete
+summary: done
+outputs:
+  - plan-review.md
+</COWORK_PILOT_EVENT>
+""".strip(),
+            exit_code=0,
+        ),
+    )
+
+    result = resume_stage_subsession(
+        run_dir=tmp_path,
+        response_text="approved",
+        response_kind="approval",
+    )
+
+    assert result.runtime_state == PlanningRuntimeState.RUNNING_EXEC.value
+    assert "pr-1" in (tmp_path / "approval-log.md").read_text(encoding="utf-8")
+    assert "approved" in (tmp_path / "approval-log.md").read_text(encoding="utf-8")

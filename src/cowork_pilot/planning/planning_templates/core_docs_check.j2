@@ -1,0 +1,33 @@
+{# core_docs_check — 핵심 문서 존재 여부 확인 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. classification-report.md를 읽고 project_mode, product_type, size_class를 확인한다
+2. 프로젝트에 필요한 문서 역할(doc role) 목록을 결정한다
+   - 예: AGENTS.md, ARCHITECTURE.md, design-docs, product-specs 등
+   - size_class에 따라 필수/선택을 구분하라
+3. 프로젝트 디렉토리에서 각 역할에 해당하는 기존 파일을 탐색한다
+   - 정확한 파일 경로를 resolved_existing_paths에 기록하라
+4. 존재하지 않는 역할을 missing_roles에 기록한다
+5. 대체 가능한 문서가 있으면 substitutions에 기록한다
+   - 예: ARCHITECTURE.md가 없지만 README에 아키텍처 섹션이 있는 경우
+6. 위 결과를 fenced JSON 블록으로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- 문서 내용을 만들어내지 마라 — 존재 여부와 역할 필요성만 판단하라
+- resolved_existing_paths는 실제 존재하는 파일의 정확한 경로여야 한다
+- scope나 plan 관련 내용을 생성하지 마라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

@@ -1,0 +1,34 @@
+{# scope_structuring — 제품 scope 구조화 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. classification-report.md의 core_user_flows와 primary_entities를 읽는다
+2. core-docs-check.md와 adaptive-docs-selection.md에서 참조할 문서 목록을 확인한다
+3. 제품을 기능적 도메인으로 분해한다
+   - 도메인은 사용자가 인지하는 제품 기능 단위여야 한다
+   - 예: "인증", "결제", "대시보드", "알림" (O)
+   - 예: "agents", "spec_index", "design_guide" (X — 이것은 문서 역할이지 제품 도메인이 아니다)
+4. 각 도메인 아래 구체적인 feature를 나열한다
+5. user_flows를 정리한다 — 도메인을 가로지르는 사용자 시나리오
+6. out_of_scope를 명시한다 — 이유를 반드시 달아라
+7. 위 결과를 fenced JSON 블록으로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- 문서 역할 이름(agents, spec_index, design_guide, architecture, security, core_beliefs, data_model, spec_documents)을 도메인이나 feature 이름으로 사용하지 마라
+- 도메인은 기술 레이어(frontend, backend, database)가 아니라 제품 기능 단위여야 한다
+- work item이나 plan chunk를 생성하지 마라 — 오직 scope만 정의하라
+- out_of_scope 항목마다 제외 이유를 달아라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

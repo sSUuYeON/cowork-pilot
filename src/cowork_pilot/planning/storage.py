@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import PurePath
-from pathlib import Path
+import shutil
+from pathlib import Path, PurePath
 
 
 def create_run_id(mode: str, target_version: str) -> str:
@@ -14,10 +14,29 @@ def _validate_relative_name(value: str, label: str) -> None:
         raise ValueError(f"unsafe {label}: {value}")
 
 
+_PLANNING_REFERENCES_DIR = Path(__file__).parent / "planning_references"
+
+
+def copy_planning_references(run_dir: Path) -> Path:
+    """Copy planning reference docs into *run_dir*/planning-references/.
+
+    Mirrors the docs-orchestrator ``_copy_references()`` pattern: reference
+    files ship inside the package and are copied into the run directory so
+    that every stage can ``RE-READ`` them from a stable, predictable path.
+    """
+    dest = run_dir / "planning-references"
+    dest.mkdir(parents=True, exist_ok=True)
+    if _PLANNING_REFERENCES_DIR.is_dir():
+        for src_file in sorted(_PLANNING_REFERENCES_DIR.glob("*.md")):
+            shutil.copy2(src_file, dest / src_file.name)
+    return dest
+
+
 def bootstrap_run_dir(base_dir: Path, run_id: str) -> Path:
     _validate_relative_name(run_id, "run_id")
     run_dir = base_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    copy_planning_references(run_dir)
     return run_dir
 
 

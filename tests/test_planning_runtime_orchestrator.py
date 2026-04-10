@@ -110,11 +110,12 @@ blocking: true
     assert _read_lines(tmp_path / "question-queue.md") == [
         "- [pcr-1] (blocking=true) 로그인 후 기본 이동 경로는?"
     ]
-    assert read_run_state(tmp_path) == {
-        "state": PlanningRuntimeState.WAITING_FOR_INPUT.value,
-        "event_id": "pcr-1",
-        "stage": "product_completeness_review",
-    }
+    state = read_run_state(tmp_path)
+    assert state["state"] == PlanningRuntimeState.WAITING_FOR_INPUT.value
+    assert state["event_id"] == "pcr-1"
+    assert state["stage"] == "product_completeness_review"
+    assert state["pending_event_id"] == "pcr-1"
+    assert state["pending_question"]["question"] == "로그인 후 기본 이동 경로는?"
     assert _read_events(tmp_path / "runtime-events.ndjson") == [
         {
             "event": "marker",
@@ -192,11 +193,12 @@ blocking: true
     assert _read_lines(tmp_path / "approval-log.md") == [
         "- [pr-approval-1] (blocking=true) 현재 작업 분할로 진행할까요?"
     ]
-    assert read_run_state(tmp_path) == {
-        "state": PlanningRuntimeState.WAITING_FOR_APPROVAL.value,
-        "event_id": "pr-approval-1",
-        "stage": "plan_review",
-    }
+    state = read_run_state(tmp_path)
+    assert state["state"] == PlanningRuntimeState.WAITING_FOR_APPROVAL.value
+    assert state["event_id"] == "pr-approval-1"
+    assert state["stage"] == "plan_review"
+    assert state["pending_event_id"] == "pr-approval-1"
+    assert state["pending_approval"]["subject"] == "현재 작업 분할로 진행할까요?"
 
 
 def test_nonblocking_approval_required_keeps_run_running_exec(tmp_path: Path):
@@ -546,6 +548,113 @@ suggested_next_action: reopen the stage and update scope
     assert _read_lines(tmp_path / "assumption-invalidations.md") == [
         "- [pr-5] reason=stage_reopen_required affected_stage=plan_review"
     ]
+
+
+def test_blocking_input_required_stores_pending_question_in_run_state(tmp_path: Path):
+    message = _message(
+        """
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-1
+reason: missing_redirect
+question: 로그인 후 기본 이동 경로는?
+options:
+  - dashboard
+  - home
+recommended: dashboard
+blocking: true
+</COWORK_PILOT_EVENT>
+""".strip()
+    )
+
+    apply_marker_bundle_to_run(
+        run_dir=tmp_path,
+        current_state=PlanningRuntimeState.RUNNING_EXEC,
+        message=message,
+    )
+
+    state = read_run_state(tmp_path)
+    assert state["pending_event_id"] == "pcr-1"
+    assert state["pending_question"] == {
+        "event_id": "pcr-1",
+        "question": "로그인 후 기본 이동 경로는?",
+        "options": ["dashboard", "home"],
+        "recommended": "dashboard",
+        "blocking": True,
+    }
+
+
+def test_blocking_approval_required_stores_pending_approval_in_run_state(tmp_path: Path):
+    message = _message(
+        """
+<COWORK_PILOT_EVENT>
+type: APPROVAL_REQUIRED
+stage: plan_review
+event_id: pr-approval-1
+reason: scope_signoff
+subject: 현재 작업 분할로 진행할까요?
+proposed_decision: proceed
+blocking: true
+</COWORK_PILOT_EVENT>
+""".strip()
+    )
+
+    apply_marker_bundle_to_run(
+        run_dir=tmp_path,
+        current_state=PlanningRuntimeState.RUNNING_EXEC,
+        message=message,
+    )
+
+    state = read_run_state(tmp_path)
+    assert state["pending_event_id"] == "pr-approval-1"
+    assert state["pending_approval"] == {
+        "event_id": "pr-approval-1",
+        "subject": "현재 작업 분할로 진행할까요?",
+        "blocking": True,
+    }
+
+
+def test_stage_complete_clears_pending_payload(tmp_path: Path):
+    """STAGE_COMPLETE after a blocking question should clear pending_* keys."""
+    message = _message(
+        """
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-1
+reason: missing_redirect
+question: 기본 경로는?
+options:
+  - dashboard
+recommended: dashboard
+blocking: true
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: product_completeness_review
+event_id: pcr-2
+reason: complete
+summary: review done
+outputs:
+  - product-completeness-review.md
+</COWORK_PILOT_EVENT>
+""".strip()
+    )
+
+    update = apply_marker_bundle_to_run(
+        run_dir=tmp_path,
+        current_state=PlanningRuntimeState.RUNNING_EXEC,
+        message=message,
+    )
+
+    # The final state is RUNNING_EXEC (STAGE_COMPLETE doesn't change state)
+    assert update == RuntimeUpdate(state=PlanningRuntimeState.RUNNING_EXEC)
+    state = read_run_state(tmp_path)
+    # pending keys must be stripped by write_run_state normalize
+    assert "pending_event_id" not in state
+    assert "pending_question" not in state
+    assert "pending_approval" not in state
 
 
 def test_completed_transitions_to_waiting_for_human_on_post_validation(

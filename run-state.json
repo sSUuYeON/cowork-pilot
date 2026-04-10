@@ -1,10 +1,10 @@
 {
   "state": "failed",
-  "exit_code": 127,
+  "exit_code": 1,
   "stage": "classification",
   "planning_context": {
-    "run_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
-    "project_dir": "/sessions/brave-clever-wozniak/mnt/cowork-pilot",
+    "run_dir": "/Users/yeonsu/autoagent/cowork-pilot",
+    "project_dir": "/Users/yeonsu/autoagent/cowork-pilot",
     "target_version": "",
     "mode": "",
     "explicit_mode": false,
@@ -116,5 +116,9 @@
       ]
     },
     "exec_plan_path": ""
-  }
+  },
+  "resume_handle": "019d75fe-8fdb-7ab2-893a-896012bce5cb",
+  "resume_handle_kind": "codex_thread_id",
+  "surface": "exec",
+  "substage": ""
 }

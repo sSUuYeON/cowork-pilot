@@ -1,0 +1,32 @@
+{# exec_plan_authoring — 최종 exec-plan 통합 작성 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. exec-plan-skeleton.md와 feature outline 파일들을 읽는다
+2. 모든 feature outline의 chunk들을 통합하여 최종 exec-plan을 구성한다
+3. 각 chunk에 대해:
+   - 번호와 제목 확정
+   - completion criteria 최종 확인
+   - task 목록 최종 확인
+   - session prompt 포함 여부 확인
+4. exec-plan 간 의존성 순서가 올바른지 최종 검증한다
+5. 결과를 최종 exec-plan 파일로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- feature outline에서 이미 작성된 내용을 변경하지 마라 — 통합만 하라
+- chunk 번호가 연속적이고 의존성 순서와 일치하는지 확인하라
+- 누락된 feature가 없는지 skeleton과 대조하라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

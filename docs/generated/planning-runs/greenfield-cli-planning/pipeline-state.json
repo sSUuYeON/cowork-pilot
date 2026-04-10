@@ -1,0 +1,14 @@
+{
+  "context": {
+    "run_dir": "/Users/yeonsu/autoagent/cowork-pilot/docs/generated/planning-runs/greenfield-cli-planning",
+    "project_dir": "/Users/yeonsu/autoagent/cowork-pilot",
+    "target_version": "cli-planning",
+    "mode": "greenfield",
+    "explicit_mode": true,
+    "request_text": "로그인 기능이 있는 SaaS를 계획해줘. 로그인 후 기본 이동 경로는 아직 결정하지 않았다. 필요하면 반드시 질문해라.",
+    "request_source": "cli",
+    "change_request_text": "# Brownfield Change Request\n\n## 변경 목표\n\nneeds confirmation\n\n## 배경\n\nneeds confirmation\n\n## in scope\n\nneeds confirmation\n\n## out of scope\n\nneeds confirmation\n\n## 영향받는 영역\n\nneeds confirmation\n\n## 제약사항\n\nunknown\n\n## 승인 기준\n\nneeds confirmation\n",
+    "change_request_source": "/Users/yeonsu/autoagent/cowork-pilot/docs/planning/change-request.md"
+  },
+  "next_dispatch_index": 3
+}

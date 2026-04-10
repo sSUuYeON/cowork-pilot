@@ -1,0 +1,35 @@
+{# plan_review — plan 리뷰 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. plan-packing.md, work-sizing.md, scope-map.md를 읽는다
+2. 커버리지 검사: scope-map.md의 모든 feature가 work item → plan으로 이어지는지 확인한다
+   - 누락된 feature가 있으면 missing_work_items에 기록하라
+3. 사이징 검사: work item의 size가 합리적인지 검토한다
+   - 과대/과소 추정이 의심되면 issues에 기록하라
+4. 실행 가능성 검사: plan의 의존성 순서가 올바른지, 순환이 없는지 확인한다
+   - 문제가 있으면 execution_risks에 기록하라
+5. 과설계 검사: 불필요하게 분할되거나 scope를 넘어선 항목이 있는지 확인한다
+6. 종합 판단:
+   - coverage_status: "full" / "partial" / "insufficient"
+   - rollback_recommended: true / false — 반드시 근거 문장을 issues에 포함하라
+7. 위 결과를 fenced JSON 블록으로 작성한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- plan을 수정하지 마라 — 오직 리뷰만 하라
+- rollback_recommended는 boolean이며 근거가 반드시 issues에 있어야 한다
+- 모든 verdict 필드를 빠짐없이 채우라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

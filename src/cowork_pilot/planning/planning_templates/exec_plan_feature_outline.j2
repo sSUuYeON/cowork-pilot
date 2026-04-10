@@ -1,0 +1,32 @@
+{# exec_plan_feature_outline — feature별 chunk 분해 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+대상 feature: {{ substage }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. exec-plan-skeleton.md를 읽고 해당 feature의 위치와 의존성을 확인한다
+2. 해당 feature를 chunk 단위로 분해한다
+3. 각 chunk에 대해:
+   - chunk 제목
+   - completion criteria (구체적이고 검증 가능한 조건)
+   - task 목록 (각 task는 단일 작업 단위)
+4. chunk 간 순서와 의존성을 명시한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- completion criteria는 "구현 완료" 같은 모호한 표현 금지 — "X 테이블에 Y 컬럼이 존재하고 마이그레이션이 통과한다" 수준으로 작성하라
+- session prompt는 작성하지 마라 — 다음 단계에서 채운다
+- 각 chunk의 task는 5개 이하로 유지하라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

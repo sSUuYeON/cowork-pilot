@@ -1,0 +1,30 @@
+[
+  {
+    "stage": "classification",
+    "dispatch_index": 0,
+    "outputs": [
+      "project_mode=greenfield",
+      "size_class=medium"
+    ]
+  },
+  {
+    "stage": "classification",
+    "dispatch_index": 1,
+    "outputs": [
+      "project_mode=greenfield",
+      "size_class=medium"
+    ]
+  },
+  {
+    "stage": "core_docs_check",
+    "dispatch_index": 2,
+    "outputs": [
+      "agents",
+      "spec_index",
+      "design_guide",
+      "architecture",
+      "security",
+      "spec_documents"
+    ]
+  }
+]

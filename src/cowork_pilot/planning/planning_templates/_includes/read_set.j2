@@ -1,0 +1,13 @@
+{% for path in read_set %}
+- {{ path }}
+{% endfor %}
+{% if handoff_summary %}
+
+이전 stage 핸드오프 요약:
+{{ handoff_summary }}
+{% endif %}
+{% if restored_context %}
+
+복원된 컨텍스트:
+{{ restored_context }}
+{% endif %}

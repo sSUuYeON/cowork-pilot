@@ -1,0 +1,39 @@
+{# work_sizing — 작업 크기 산정 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. scope-map.md를 읽고 domains, features, user_flows를 파악한다
+2. 각 feature에 대해 work item을 생성한다:
+   - id: 고유 식별자 (예: "WI-001")
+   - title: 작업 제목
+   - domain: scope-map.md의 도메인
+   - feature: scope-map.md의 feature
+   - size: S / M / L 중 하나
+   - risk: low / medium / high 중 하나
+   - depends_on: 의존하는 다른 work item의 id 목록
+3. size 판단 기준을 명시하라:
+   - S: 1-2일, 단일 모듈, 명확한 구현 경로
+   - M: 3-5일, 2-3개 모듈, 일부 설계 판단 필요
+   - L: 1주+, 여러 모듈, 설계 결정 또는 외부 의존성
+4. depends_on 관계가 순환하지 않는지 확인하라
+5. 위 결과를 fenced JSON 블록으로 작성한다 — work_items 배열
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- scope를 재정의하지 마라 — scope-map.md를 그대로 입력으로 받아라
+- 모든 work item의 size에 판단 근거를 간단히 달아라
+- depends_on이 순환(cycle)하면 안 된다
+- plan chunk나 실행 순서를 생성하지 마라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

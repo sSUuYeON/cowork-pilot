@@ -496,6 +496,7 @@ def run_planning_mode(
     request_file: str = "",
     change_request: str = "",
     change_request_file: str = "",
+    interactive: bool = False,
 ) -> None:
     from cowork_pilot.config import load_planning_config
     from cowork_pilot.planning.input_contract import resolve_planning_input_bundle
@@ -528,8 +529,19 @@ def run_planning_mode(
             request_source=input_bundle.request_source,
             change_request_text=input_bundle.change_request_text,
             change_request_source=input_bundle.change_request_source,
-        )
+        ),
+        interactive=interactive,
     )
+
+
+def _should_use_interactive_resume(mode: str) -> bool:
+    """Determine whether to prompt in the terminal for planning questions."""
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    # "auto" — use interactive only when both stdin and stdout are TTYs
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def cli() -> None:
@@ -563,6 +575,8 @@ def cli() -> None:
                        help="Response text for resume (only used with --mode planning --planning-subcommand resume)")
     parser.add_argument("--response-kind", type=str, choices=["answer", "approval"], default="answer",
                        help="Response kind for resume (only used with --mode planning --planning-subcommand resume)")
+    parser.add_argument("--interactive-resume", type=str, choices=["auto", "always", "never"], default="auto",
+                       help="Prompt in the current terminal for planning questions instead of requiring --response")
     parser.add_argument("--estimate", action="store_true", default=False,
                        help="Print session estimate and exit (only used with --mode planning)")
     parser.add_argument("description", nargs="?", default="",
@@ -617,6 +631,8 @@ def cli() -> None:
                 if args.planning_subcommand != "resume":
                     sys.exit(0)
 
+            interactive = _should_use_interactive_resume(args.interactive_resume)
+
             if args.planning_subcommand == "resume":
                 from cowork_pilot.planning.runner import resume_planning_pipeline
 
@@ -630,6 +646,7 @@ def cli() -> None:
                     run_dir=run_dir,
                     response_text=response_text,
                     response_kind=response_kind,
+                    interactive=interactive,
                 )
                 print(f"Resume complete: state={result.runtime_state}")
             else:
@@ -640,6 +657,7 @@ def cli() -> None:
                     request_file=args.request_file,
                     change_request=args.change_request,
                     change_request_file=args.change_request_file,
+                    interactive=interactive,
                 )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)

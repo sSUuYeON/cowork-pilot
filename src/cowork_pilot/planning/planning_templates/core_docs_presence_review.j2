@@ -1,0 +1,30 @@
+{# core_docs_presence_review — 핵심 문서 상태 검증 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. classification-report.md를 읽고 프로젝트 특성을 확인한다
+2. core-docs-check.md에서 missing_roles와 substitutions를 확인한다
+3. 실제 프로젝트 디렉토리를 탐색하여 core docs의 현재 상태를 검증한다:
+   - 파일이 존재하는가?
+   - 내용이 비어있지 않은가?
+   - 역할에 맞는 내용을 담고 있는가?
+4. substitution으로 지정된 파일이 실제로 대체 가능한지 확인한다
+5. 최종 docs 가용 상태를 정리한다
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- 문서 내용을 생성하거나 보강하지 마라 — 존재와 적합성만 확인하라
+- 파일이 존재하지만 역할에 맞지 않으면 명확히 표시하라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

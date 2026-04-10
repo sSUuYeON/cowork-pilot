@@ -1,0 +1,30 @@
+{# product_completeness_review — 제품 완전성 검토 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. classification-report.md와 scope-map.md(있으면)를 읽는다
+2. normalized-request.md에서 사용자의 요구사항을 파악한다
+3. 기존 문서와 기획서를 대조하여 제품 완전성을 검토한다:
+   - 모든 핵심 사용자 흐름이 문서화되어 있는가?
+   - 비기능 요구사항(보안, 성능, 접근성)이 다뤄져 있는가?
+   - 엣지 케이스와 에러 처리가 고려되어 있는가?
+4. 미충족/부분충족 항목을 카테고리별로 정리한다
+5. size_class에 따라 완전성 기준을 조정한다 (small은 관대하게, large는 엄격하게)
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- 빠진 내용을 직접 채우지 마라 — 무엇이 빠져있는지만 식별하라
+- 각 미충족 항목에 심각도(critical/important/nice-to-have)를 달아라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}

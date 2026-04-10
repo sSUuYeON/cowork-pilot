@@ -1,0 +1,36 @@
+{# plan_packing — plan chunk 그룹핑 stage #}
+stage={{ stage }}
+target_version={{ target_version }}
+
+읽어야 할 파일:
+{% include '_includes/read_set.j2' %}
+
+다음을 수행하라:
+1. work-sizing.md와 scope-map.md를 읽는다
+2. work item들을 실행 가능한 plan chunk로 그룹핑한다:
+   - plan_name: 실행 단위 이름
+   - goal: 이 plan이 달성하는 것
+   - included_work_item_ids: 포함된 work item id 목록
+   - why_grouped: 왜 이 항목들을 묶었는지
+   - dependencies: 이 plan이 의존하는 다른 plan 이름 목록
+3. 그룹핑 원칙:
+   - 의존성 순서를 존중하라 — 의존 대상이 먼저 실행되어야 한다
+   - 병렬 실행 가능한 plan은 dependencies가 겹치지 않아야 한다
+   - 한 plan에 work item이 너무 많으면 (5개 초과) 분할을 검토하라
+4. 모든 work item이 정확히 하나의 plan에 포함되는지 확인하라 — 누락이나 중복 없이
+5. 위 결과를 fenced JSON 블록으로 작성한다 — plans 배열
+
+출력 파일:
+- {{ output_file }}
+
+{% include '_includes/output_format.j2' %}
+
+품질 규칙:
+- work item을 재추정하지 마라 — work-sizing.md를 그대로 입력으로 받아라
+- 모든 work item이 하나의 plan에 포함되어야 한다 (누락 금지)
+- review verdict를 생성하지 마라
+{% for item in forbidden %}
+- {{ item }}
+{% endfor %}
+
+{% include '_includes/completion_protocol.j2' %}
