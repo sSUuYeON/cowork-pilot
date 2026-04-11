@@ -44,3 +44,5 @@ logs/*.log
 
 # Cache
 cache/
+*.djcache
+.djcache/
