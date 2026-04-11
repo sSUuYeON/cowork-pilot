@@ -10,8 +10,12 @@
 - {{ project_dir }}/docs/generated/domain-extracts/shared.md
 {% for feat in features %}
 - {{ project_dir }}/docs/generated/domain-extracts/{{ feat.domain }}/{{ feat.feature }}.md
-- {{ project_dir }}/docs/generated/domain-extracts/{{ feat.domain }}/_overview.md
 {% endfor %}
+{% if extracts is defined and extracts %}
+{% for d, present in extracts.overviews.items() if present %}
+- {{ project_dir }}/docs/generated/domain-extracts/{{ d }}/_overview.md
+{% endfor %}
+{% endif %}
 
 다음을 수행하라:
 1. 위 파일들을 읽는다
@@ -41,3 +45,13 @@
 - 점수(1~3)를 매 항목에 부여하라
 
 완료 시 모든 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.
+{% if overview_reasons %}
+
+### Domain Overview Decisions (컨텍스트)
+
+{% for d, reason in overview_reasons.items() %}
+- **{{ d }}**: {{ "overview 있음" if extracts is defined and extracts and extracts.overviews.get(d) else "overview 없음" }} — {{ reason }}
+{% endfor %}
+
+이 목록은 참고용 컨텍스트다. 파일이 실제로 존재하는지 여부만 읽기 판단에 사용한다.
+{% endif %}

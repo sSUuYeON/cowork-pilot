@@ -27,3 +27,12 @@
 {"event": "subprocess_failure", "exit_code": 1, "stage": "classification"}
 {"event": "subprocess_failure", "exit_code": 1, "stage": "classification"}
 {"event": "subprocess_failure", "exit_code": 1, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}
+{"event": "subprocess_failure", "exit_code": 127, "stage": "classification"}

@@ -2,12 +2,37 @@
 프로젝트 경로: {{ project_dir }}
 대상 도메인: {{ domain }}
 
+{% include "_partials/overview_boundary_rules.md.j2" %}
+
 읽어야 할 파일:
 - {{ project_dir }}/docs/generated/analysis-report.md
 {% for doc in source_docs %}
 - {{ doc }}
 {% endfor %}
 - {{ project_dir }}/docs/generated/references/output-formats.md
+
+### `analysis-report.md` 필수 섹션: Domain Overview Decisions
+
+`analysis-report.md` 안에 아래 형식의 표를 반드시 포함하라. 이 표는 `_overview.md` 생성 여부의 유일한 기계 판독 계약이다. 본 도메인 세션은 `analysis-report.md`를 덮어 쓰지 않지만, 이 세션에서 이 도메인 행의 `overview_needed` 값을 반드시 준수하라.
+
+{% raw %}
+```md
+## Domain Overview Decisions
+
+| domain | overview_needed | reason |
+|---|---|---|
+| <도메인명> | yes | <overview가 필요한 이유, 1~2 문장> |
+| <도메인명> | no | <overview가 불필요한 이유, 1~2 문장> |
+```
+{% endraw %}
+
+규칙:
+- 헤딩은 정확히 `## Domain Overview Decisions`.
+- 컬럼 순서는 `domain | overview_needed | reason` 고정.
+- `overview_needed`는 문자 그대로 `yes` 또는 `no`만 허용.
+- `reason`은 비어 있을 수 없다.
+- `domain` 값은 본 보고서의 다른 섹션에서 쓴 도메인 디렉토리 이름과 일치해야 한다.
+- 단일 도메인 프로젝트라도 이 표는 한 행으로 반드시 작성한다.
 
 다음을 수행하라:
 1. analysis-report.md를 읽어 전체 프로젝트 맥락을 파악한다
@@ -18,14 +43,19 @@
    - 기능별로 파일을 나눠라 ({{ domain }}/기능.md)
    - 한 문단이 여러 기능에 관련되면 양쪽 다 복사하라 (중복 허용)
    - 복사한 문단 앞에 <!-- SOURCE: 원본파일명#섹션 --> 주석을 달아라
-4. _overview.md에는 도메인 내 여러 기능이 공유하는 맥락을 담는다
+4. `analysis-report.md`의 `Domain Overview Decisions` 표에서 이 도메인 행의 `overview_needed` 값이 `yes`인 경우에만 `_overview.md`에 도메인 내 여러 기능이 공유하는 맥락을 담는다. `no`이면 파일을 생성하지 마라.
 5. 모든 출력 파일의 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
 
 출력 파일:
-- {{ project_dir }}/docs/generated/domain-extracts/{{ domain }}/ (기능별 파일)
-- {{ project_dir }}/docs/generated/domain-extracts/{{ domain }}/_overview.md
+- {{ project_dir }}/docs/generated/domain-extracts/{{ domain }}/
+
+위 `출력 파일:` bullet list는 오케스트레이터가 세션 완료를 감지하는 머신 판독 블록이다. 그래서 bullet에는 도메인 디렉토리 하나만 두고, 실제로 생성해야 하는 개별 파일은 아래 산문으로 지시한다. bullet에 placeholder(`<feature>.md` 등) 나열하지 마라. 이 도메인 디렉토리 안에 아래 파일들을 생성하라:
+
+1. 이 도메인에서 식별한 각 feature당 1개씩 `{{ project_dir }}/docs/generated/domain-extracts/{{ domain }}/<feature명>.md`. feature 개수와 이름은 `analysis-report.md`의 이 도메인 섹션을 기준으로 결정하라. (feature 파일 전수 검증은 `evaluate_phase1()` quality gate가 `analysis-report.md`를 기준으로 수행한다.)
+2. `analysis-report.md`의 `Domain Overview Decisions` 표에서 이 도메인 행의 `overview_needed` 값이 `yes`일 때만 추가로 `{{ project_dir }}/docs/generated/domain-extracts/{{ domain }}/_overview.md`를 생성하라. `no`이면 생성하지 마라. 판단은 위의 "문서 경계 규칙 > overview 생성 판정 체크리스트"를 기준으로 하라.
 
 품질 규칙:
+- `docs/generated/domain-extracts/{{ domain }}/` 아래에 기능별 파일을 생성하라
 - "요약"하지 말고 원문을 그대로 복사하라
 - 모든 복사 문단 앞에 <!-- SOURCE: 원본파일명#섹션 --> 주석을 달아라
 - 각 기능별 파일은 self-contained 단위여야 한다

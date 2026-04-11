@@ -201,6 +201,42 @@ class TestCreateSubprocessRunner:
             assert assistant_message == "Final message"
             assert len(event_lines) == 3
 
+    def test_subprocess_runner_prefers_task_complete_message_from_new_schema(self):
+        """task_complete.last_agent_message wins over intermediate assistant messages."""
+        ndjson_output = (
+            json.dumps({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "response-item final"}],
+                },
+            })
+            + "\n"
+            + json.dumps({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "last_agent_message": "task-complete final",
+                },
+            })
+            + "\n"
+        )
+
+        with patch("cowork_pilot.codex.codex_runner.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=ndjson_output,
+                stderr="",
+            )
+
+            runner = create_subprocess_runner()
+            event_lines, assistant_message, exit_code = runner(["codex", "test"])
+
+            assert len(event_lines) == 2
+            assert assistant_message == "task-complete final"
+            assert exit_code == 0
+
     def test_subprocess_runner_ignores_incomplete_agent_messages(self):
         """Only completed agent_messages are considered."""
         ndjson_output = (

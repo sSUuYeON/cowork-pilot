@@ -5,10 +5,7 @@ Design reference: §12.4 (테스트 전략) — test_quality_gate.py section.
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
-
-import pytest
 
 from cowork_pilot.config import DocsOrchestratorConfig
 from cowork_pilot.quality_gate import (
@@ -16,7 +13,6 @@ from cowork_pilot.quality_gate import (
     _count_lines,
     _extract_sections,
     _extract_source_tags,
-    _parse_features_from_report,
     check_phase1_quality,
 )
 
@@ -39,6 +35,7 @@ def _setup_project(
     source_tags: list[tuple[str, str]] | None = None,
     features: list[tuple[str, str]] | None = None,
     extract_files: dict[str, int] | None = None,
+    include_shared: bool = True,
 ) -> Path:
     """Build a minimal project directory structure in *tmp_path*.
 
@@ -77,6 +74,14 @@ def _setup_project(
                     tag_block += f"<!-- SOURCE: {fname}#{sec} -->\n"
             ef_content = tag_block + _make_lines(max(0, line_count - tag_block.count("\n")))
             (extracts / filename).write_text(ef_content, encoding="utf-8")
+
+    if include_shared and not (extracts / "shared.md").exists():
+        tag_block = ""
+        if source_tags:
+            for fname, sec in source_tags:
+                tag_block += f"<!-- SOURCE: {fname}#{sec} -->\n"
+        shared_content = tag_block + _make_lines(max(0, 15 - tag_block.count("\n")))
+        (extracts / "shared.md").write_text(shared_content, encoding="utf-8")
 
     # Analysis report
     if features:
@@ -144,26 +149,12 @@ class TestExtractSourceTags:
         assert _extract_source_tags(tmp_path / "nope") == set()
 
 
-class TestParseFeaturesFromReport:
-    """_parse_features_from_report helper."""
-
-    def test_parses_table(self, tmp_path: Path) -> None:
-        report = tmp_path / "report.md"
-        report.write_text(textwrap.dedent("""\
-            # Report
-
-            | 도메인 | 기능 |
-            |--------|------|
-            | auth | 로그인 |
-            | payment | 결제 |
-        """))
-        assert _parse_features_from_report(report) == [
-            ("auth", "로그인"),
-            ("payment", "결제"),
-        ]
-
-    def test_nonexistent_report(self, tmp_path: Path) -> None:
-        assert _parse_features_from_report(tmp_path / "nope.md") == []
+# NOTE: ``_parse_features_from_report`` and ``TestMissingFeatures`` were
+# removed as part of the single-gate refactor
+# (plan 2026-04-12-overview-optional.md, Chunk 3). Shared / per-feature /
+# overview presence checks now live in
+# ``cowork_pilot.orchestrator.quality_gate`` and are exercised by
+# ``tests/unit/test_quality_gate_overview.py``.
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +175,7 @@ class TestCoverageRatio:
 
     def test_fail_when_below_threshold(self, tmp_path: Path) -> None:
         """100줄 원본 + 70줄 extracts → ratio 0.70 < 0.8 → fail."""
-        project = _setup_project(tmp_path, source_lines=100, extract_lines=70)
+        project = _setup_project(tmp_path, source_lines=100, extract_lines=55)
         config = DocsOrchestratorConfig(coverage_ratio_threshold=0.8)
         result = check_phase1_quality(project, config)
         assert result.coverage_ratio < 0.8
@@ -222,84 +213,34 @@ class TestSourceTagCoverage:
         assert result.uncovered_sections == []
 
 
-class TestMissingFeatures:
-    """검증 3: empty file check — feature extract files exist with ≥ 10 lines."""
-
-    def test_missing_feature_detected(self, tmp_path: Path) -> None:
-        """analysis-report에 기능 3개 → extract 2개만 존재 → missing: [기능3]."""
-        features = [
-            ("auth", "로그인"),
-            ("auth", "회원가입"),
-            ("payment", "결제"),
-        ]
-        project = _setup_project(
-            tmp_path,
-            source_lines=100,
-            extract_lines=100,
-            source_sections=["섹션A"],
-            source_tags=[("plan.md", "섹션A")],
-            features=features,
-            extract_files={
-                "auth-로그인.md": 15,
-                "auth-회원가입.md": 12,
-                # payment-결제.md is missing
-            },
-        )
-        config = DocsOrchestratorConfig()
-        result = check_phase1_quality(project, config)
-        assert "payment/결제" in result.missing_features
-        assert "auth/로그인" not in result.missing_features
-
-    def test_short_file_treated_as_missing(self, tmp_path: Path) -> None:
-        """Extract file exists but has < 10 lines → treated as missing."""
-        features = [("auth", "로그인")]
-        project = _setup_project(
-            tmp_path,
-            source_lines=100,
-            extract_lines=100,
-            source_sections=["섹션A"],
-            source_tags=[("plan.md", "섹션A")],
-            features=features,
-            extract_files={"auth-로그인.md": 5},
-        )
-        config = DocsOrchestratorConfig()
-        result = check_phase1_quality(project, config)
-        assert "auth/로그인" in result.missing_features
-
-
 class TestPassedField:
-    """passed 필드: 3종 검증 모두 통과해야 True."""
+    """passed 필드: coverage-only 단일 검증."""
 
     def test_all_pass(self, tmp_path: Path) -> None:
-        """모든 검증 통과 → passed is True."""
-        features = [("auth", "로그인")]
+        """Coverage 통과 → passed is True (legacy gate is now coverage-only)."""
         project = _setup_project(
             tmp_path,
             source_lines=100,
             extract_lines=100,
             source_sections=["섹션A"],
             source_tags=[("plan.md", "섹션A")],
-            features=features,
-            extract_files={"auth-로그인.md": 100},
         )
         config = DocsOrchestratorConfig()
         result = check_phase1_quality(project, config)
         assert result.passed is True
         assert result.coverage_ratio >= 0.8
         assert result.uncovered_sections == []
+        # ``missing_features`` is always empty after the single-gate refactor.
         assert result.missing_features == []
 
     def test_coverage_fail_causes_overall_fail(self, tmp_path: Path) -> None:
         """Coverage ratio alone failing → passed is False."""
-        features = [("auth", "로그인")]
         project = _setup_project(
             tmp_path,
             source_lines=100,
             extract_lines=50,  # 0.50 < 0.8
             source_sections=["섹션A"],
             source_tags=[("plan.md", "섹션A")],
-            features=features,
-            extract_files={"auth-로그인.md": 15},
         )
         config = DocsOrchestratorConfig()
         result = check_phase1_quality(project, config)
@@ -307,15 +248,12 @@ class TestPassedField:
 
     def test_uncovered_section_is_warning_only(self, tmp_path: Path) -> None:
         """Uncovered section alone → passed is True (warning only, not hard fail)."""
-        features = [("auth", "로그인")]
         project = _setup_project(
             tmp_path,
             source_lines=100,
             extract_lines=100,
             source_sections=["섹션A", "섹션B"],
             source_tags=[("plan.md", "섹션A")],  # 섹션B missing
-            features=features,
-            extract_files={"auth-로그인.md": 100},
         )
         config = DocsOrchestratorConfig()
         result = check_phase1_quality(project, config)
@@ -323,20 +261,26 @@ class TestPassedField:
         assert "섹션B" in result.uncovered_sections
         assert any("SOURCE 태그 미커버" in w for w in result.warnings)
 
-    def test_missing_feature_causes_overall_fail(self, tmp_path: Path) -> None:
-        """Missing feature alone → passed is False."""
-        features = [("auth", "로그인"), ("payment", "결제")]
+    def test_missing_shared_does_not_affect_legacy_passed(
+        self, tmp_path: Path
+    ) -> None:
+        """Shared/feature presence is owned by the new gate.
+
+        Missing shared.md must not fail the legacy coverage-only gate —
+        that responsibility belongs to
+        ``cowork_pilot.orchestrator.quality_gate.evaluate_phase1`` after
+        the single-gate refactor (plan 2026-04-12-overview-optional,
+        Chunk 3).
+        """
         project = _setup_project(
             tmp_path,
             source_lines=100,
             extract_lines=100,
             source_sections=["섹션A"],
             source_tags=[("plan.md", "섹션A")],
-            features=features,
-            extract_files={"auth-로그인.md": 15},
-            # payment-결제.md missing
+            include_shared=False,
         )
         config = DocsOrchestratorConfig()
         result = check_phase1_quality(project, config)
-        assert result.passed is False
-        assert "payment/결제" in result.missing_features
+        assert result.passed is True
+        assert result.missing_features == []

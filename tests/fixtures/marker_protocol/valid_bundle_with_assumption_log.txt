@@ -1,0 +1,21 @@
+분석 리포트를 작성했고 출력 파일 마커를 검증했습니다.
+
+<COWORK_PILOT_EVENT>
+type: ASSUMPTION_LOG
+stage: analysis_and_extracts
+event_id: analysis_and_extracts_assumption_1
+reason: 요청된 참고 문서 경로가 저장소에 존재하지 않았음
+assumption: docs/generated/references/project-conventions.md 는 누락된 상태로 보고 기존 출력 형식을 유지함
+confidence: medium
+impact: medium
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: analysis_and_extracts
+event_id: analysis_and_extracts_done
+reason: All outputs written successfully
+summary: 분석 리포트와 원문 추출 파일을 작성함
+outputs:
+  - docs/generated/analysis-report.md
+  - docs/generated/domain-extracts/shared.md
+</COWORK_PILOT_EVENT>

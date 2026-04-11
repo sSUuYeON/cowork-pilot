@@ -1,5 +1,6 @@
 # Planning Pipeline Jinja2 Templates Implementation Plan
 
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace Python string-concatenation prompt generation with Jinja2 templates, adding docs-orchestrator-level procedural instructions to every planning stage.
 

@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 
 from cowork_pilot.orchestrator_prompts import (
+    build_codex_session_prompt,
     build_session_prompt,
+    get_phase_template_name,
     get_section_keywords,
 )
 
@@ -66,6 +68,15 @@ class TestPhase1Single:
         assert "analysis-report.md" in prompt
         assert "domain-extracts" in prompt
 
+    def test_output_file_bullets_use_plain_paths(self) -> None:
+        prompt = build_session_prompt(
+            "phase1_single",
+            project_dir=PROJECT_DIR,
+            source_docs=SAMPLE_SOURCE_DOCS,
+        )
+        assert f"- {PROJECT_DIR}/docs/generated/domain-extracts/" in prompt
+        assert "(도메인별/기능별 파일)" not in prompt
+
 
 class TestPhase1Domain:
     def test_renders_with_domain(self) -> None:
@@ -86,6 +97,16 @@ class TestPhase1Domain:
             source_docs=SAMPLE_SOURCE_DOCS,
         )
         assert "analysis-report.md" in prompt
+
+    def test_output_file_bullets_use_plain_paths(self) -> None:
+        prompt = build_session_prompt(
+            "phase1_domain",
+            project_dir=PROJECT_DIR,
+            domain="auth",
+            source_docs=SAMPLE_SOURCE_DOCS,
+        )
+        assert f"- {PROJECT_DIR}/docs/generated/domain-extracts/auth/" in prompt
+        assert "(기능별 파일)" not in prompt
 
 
 # ── Phase 2 ─────────────────────────────────────────────────────────
@@ -342,6 +363,91 @@ class TestUnknownPhase:
 
 
 # ── get_section_keywords ────────────────────────────────────────────
+
+
+# ── get_phase_template_name ─────────────────────────────────────────
+
+
+def test_get_phase_template_name_known():
+    assert get_phase_template_name("phase1_single") == "phase1_single.j2"
+    assert get_phase_template_name("phase2_manual") == "phase2_manual.j2"
+
+
+def test_get_phase_template_name_unknown():
+    with pytest.raises(ValueError, match="Unknown phase"):
+        get_phase_template_name("phase99_bogus")
+
+
+# ── build_codex_session_prompt ──────────────────────────────────────
+
+
+def test_build_codex_session_prompt_contains_base(tmp_path):
+    """Codex prompt must include base template content."""
+    # Minimal fake templates
+    inc_dir = tmp_path / "_includes"
+    inc_dir.mkdir()
+    (tmp_path / "phase1_single.j2").write_text("BASE_CONTENT {{ project_dir }}", encoding="utf-8")
+    (inc_dir / "codex_runtime_contract.j2").write_text("CODEX_CONTRACT", encoding="utf-8")
+    (tmp_path / "codex_wrapper.j2").write_text(
+        "{% include base_template_name %}\n{% include '_includes/codex_runtime_contract.j2' %}",
+        encoding="utf-8",
+    )
+
+    result = build_codex_session_prompt(
+        "phase1_single",
+        template_dir=tmp_path,
+        project_dir="/proj",
+    )
+    assert "BASE_CONTENT /proj" in result
+    assert "CODEX_CONTRACT" in result
+
+
+def test_build_codex_session_prompt_unknown_phase():
+    with pytest.raises(ValueError, match="Unknown phase"):
+        build_codex_session_prompt("phase99_bogus")
+
+
+def test_build_codex_session_prompt_does_not_modify_base_template(tmp_path):
+    """Base template file must be unchanged after rendering."""
+    inc_dir = tmp_path / "_includes"
+    inc_dir.mkdir()
+    base_content = "ORIGINAL {{ project_dir }}"
+    base_file = tmp_path / "phase1_single.j2"
+    base_file.write_text(base_content, encoding="utf-8")
+    (inc_dir / "codex_runtime_contract.j2").write_text("", encoding="utf-8")
+    (tmp_path / "codex_wrapper.j2").write_text(
+        "{% include base_template_name %}\n{% include '_includes/codex_runtime_contract.j2' %}",
+        encoding="utf-8",
+    )
+
+    build_codex_session_prompt("phase1_single", template_dir=tmp_path, project_dir="/p")
+    assert base_file.read_text(encoding="utf-8") == base_content
+
+
+def test_build_codex_session_prompt_real_contract_uses_flat_markers() -> None:
+    prompt = build_codex_session_prompt(
+        "phase2_manual",
+        project_dir=PROJECT_DIR,
+        features=SAMPLE_FEATURES,
+    )
+    assert "type: INPUT_REQUIRED" in prompt
+    assert "type: STAGE_COMPLETE" in prompt
+    assert "Each marker is a JSON object" not in prompt
+
+
+def test_build_codex_session_prompt_declares_assumption_log_required_fields() -> None:
+    prompt = build_codex_session_prompt(
+        "phase2_manual",
+        project_dir=PROJECT_DIR,
+        features=SAMPLE_FEATURES,
+    )
+
+    assert "ALL of the following fields are REQUIRED" in prompt
+    assert "- `confidence`" in prompt
+    assert "- `impact`" in prompt
+    assert "confidence: <low|medium|high>" in prompt
+    assert "impact: <low|medium|high>" in prompt
+    assert "If an `ASSUMPTION_LOG` marker is missing any required field" in prompt
 
 
 class TestGetSectionKeywords:

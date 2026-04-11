@@ -13,6 +13,70 @@ def _truncate_text(text: str, limit: int = _EVENT_TEXT_SNIPPET_CHARS) -> str:
     return compact[: limit - 3] + "..."
 
 
+def _extract_response_item_assistant_message(payload: dict) -> str:
+    """Return assistant output text from response_item/message payloads."""
+    if payload.get("type") != "response_item":
+        return ""
+
+    item = payload.get("payload")
+    if not isinstance(item, dict):
+        return ""
+    if item.get("type") != "message" or item.get("role") != "assistant":
+        return ""
+
+    parts: list[str] = []
+    for content_item in item.get("content", []):
+        if not isinstance(content_item, dict):
+            continue
+        if content_item.get("type") != "output_text":
+            continue
+        text = content_item.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+
+    return "\n".join(parts).strip()
+
+
+def _extract_event_msg_message(payload: dict) -> tuple[str, str]:
+    """Return (subtype, message) for event_msg payloads we care about."""
+    if payload.get("type") != "event_msg":
+        return ("", "")
+
+    body = payload.get("payload")
+    if not isinstance(body, dict):
+        return ("", "")
+
+    body_type = body.get("type")
+    if body_type == "task_complete":
+        text = body.get("last_agent_message")
+        if isinstance(text, str) and text.strip():
+            return ("task_complete", text.strip())
+        return ("task_complete", "")
+
+    if body_type == "agent_message":
+        text = body.get("message")
+        if isinstance(text, str) and text.strip():
+            return ("agent_message", text.strip())
+        return ("agent_message", "")
+
+    return ("", "")
+
+
+def _extract_legacy_item_completed_message(payload: dict) -> str:
+    """Return assistant text from legacy item.completed/agent_message events."""
+    if payload.get("type") != "item.completed":
+        return ""
+
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("type") != "agent_message":
+        return ""
+
+    text = item.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return ""
+
+
 def summarize_codex_event(payload: dict) -> tuple[list[str], str]:
     """Convert a Codex JSONL event into human-readable log lines."""
     event_type = payload.get("type", "unknown")
@@ -49,6 +113,20 @@ def summarize_codex_event(payload: dict) -> tuple[list[str], str]:
         else:
             lines.append("turn completed")
         return (lines, last_message)
+
+    task_complete_type, task_complete_message = _extract_event_msg_message(payload)
+    if task_complete_type == "task_complete":
+        lines.append("task complete")
+        return (lines, task_complete_message)
+
+    if task_complete_type == "agent_message":
+        lines.append(f"assistant: {_truncate_text(task_complete_message)}")
+        return (lines, task_complete_message)
+
+    response_item_message = _extract_response_item_assistant_message(payload)
+    if response_item_message:
+        lines.append(f"assistant: {_truncate_text(response_item_message)}")
+        return (lines, response_item_message)
 
     if not event_type.startswith("item."):
         lines.append(f"{event_type}: {_truncate_text(json.dumps(payload, ensure_ascii=False))}")
@@ -119,22 +197,44 @@ def extract_thread_id(lines: list[str]) -> str:
 
 
 def extract_terminal_assistant_message(lines: list[str]) -> str:
-    """Return the last completed assistant message observed in the event stream."""
-    last_message = ""
+    """Return the final assistant message from a Codex JSONL event stream.
+
+    Priority is:
+    1. `event_msg.task_complete.last_agent_message`
+    2. last `response_item` assistant message text
+    3. last `event_msg.agent_message`
+    4. legacy `item.completed.agent_message`
+    """
+    last_task_complete_message = ""
+    last_response_item_message = ""
+    last_event_agent_message = ""
+    last_legacy_message = ""
 
     for line in lines:
         payload = _parse_event_line(line)
         if payload is None:
             continue
-        if payload.get("type") != "item.completed":
+
+        message_type, message_text = _extract_event_msg_message(payload)
+        if message_type == "task_complete" and message_text:
+            last_task_complete_message = message_text
+            continue
+        if message_type == "agent_message" and message_text:
+            last_event_agent_message = message_text
             continue
 
-        item = payload.get("item", {})
-        if not isinstance(item, dict) or item.get("type") != "agent_message":
+        response_item_message = _extract_response_item_assistant_message(payload)
+        if response_item_message:
+            last_response_item_message = response_item_message
             continue
 
-        text = item.get("text")
-        if isinstance(text, str) and text.strip():
-            last_message = text.strip()
+        legacy_message = _extract_legacy_item_completed_message(payload)
+        if legacy_message:
+            last_legacy_message = legacy_message
 
-    return last_message
+    return (
+        last_task_complete_message
+        or last_response_item_message
+        or last_event_agent_message
+        or last_legacy_message
+    )

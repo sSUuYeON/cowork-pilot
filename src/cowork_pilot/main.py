@@ -534,6 +534,137 @@ def run_planning_mode(
     )
 
 
+def _run_docs_orchestrator_resume(args, config: Config, orch_config) -> None:
+    """Handle ``--mode docs-orchestrator --docs-subcommand resume``.
+
+    This is a **one-shot** CLI wrapper. Per spec MUST 5, it never owns a
+    resume loop — it forwards to the pure helper
+    :func:`resume_waiting_docs_step` exactly once and, on ``completed``,
+    hands control back to ``run_docs_orchestrator()`` which owns the only
+    legitimate resume loop.
+
+    Behaviour (spec Chunk 5):
+
+    1. Ensure an ``orchestrator-runtime.json`` exists and is waiting.
+    2. If ``--response`` is empty and interactive resume is on, prompt the
+       terminal **at most once** using the runtime payload. Cancel
+       (EOF / Ctrl-C) exits with ``sys.exit(1)``.
+    3. Delegate the actual state mutation to ``resume_waiting_docs_step``.
+    4. On ``completed``: print a short message and re-enter the orchestrator
+       body by calling ``run_docs_orchestrator`` exactly once.
+    5. On ``waiting``: print "still waiting — run resume again" and return.
+       No loop. The orchestrator body is the only place a resume loop is
+       allowed to live.
+    6. On ``failed``: print the error and ``sys.exit(1)``.
+    """
+    from cowork_pilot.docs_orchestrator import (
+        _notify_escalate_message,
+        run_docs_orchestrator,
+    )
+    from cowork_pilot.docs_orchestrator_resume import resume_waiting_docs_step
+    from cowork_pilot.docs_orchestrator_runtime import (
+        load_runtime,
+        runtime_is_waiting,
+    )
+    from cowork_pilot.docs_orchestrator_terminal_ui import (
+        prompt_from_runtime_payload,
+    )
+
+    project_dir = Path(config.project_dir)
+
+    # 1. runtime must exist and be in a waiting state ---------------------
+    runtime = load_runtime(project_dir)
+    if runtime is None:
+        print(
+            "ERROR: No orchestrator-runtime.json found. Nothing to resume.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not runtime_is_waiting(project_dir):
+        print(
+            f"ERROR: Runtime is not in a waiting state "
+            f"(current: {runtime.get('runtime_state')})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not runtime.get("resume_handle", ""):
+        print("ERROR: runtime file has no resume_handle.", file=sys.stderr)
+        sys.exit(1)
+
+    # 2. figure out the response — either CLI flag or a single terminal
+    # prompt (when interactive resume is on). Per MUST 5 we only prompt
+    # once — we do NOT loop waiting -> prompt -> waiting here.
+    response_text = getattr(args, "response", None) or ""
+    response_kind = getattr(args, "response_kind", "answer") or "answer"
+
+    if not response_text:
+        if getattr(orch_config, "interactive_resume", False):
+            terminal_response = prompt_from_runtime_payload(dict(runtime))
+            if terminal_response is None:
+                # EOF / Ctrl-C — leave runtime intact and exit.
+                print(
+                    "Resume cancelled. Runtime left untouched; "
+                    "re-run resume to try again.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            response_text = terminal_response.text
+            response_kind = terminal_response.kind
+        else:
+            print("ERROR: --response is required for resume", file=sys.stderr)
+            sys.exit(1)
+
+    # 3. delegate the actual resume to the pure helper --------------------
+    try:
+        outcome = resume_waiting_docs_step(
+            config,
+            orch_config,
+            response_text=response_text,
+            response_kind=response_kind,
+        )
+    except RuntimeError as exc:
+        # Helper-level validation failures (missing runtime, not waiting,
+        # missing resume_handle). The earlier checks above normally catch
+        # these, so reaching this branch indicates a race or a programmer
+        # error — surface it cleanly.
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        msg = f"Codex resume raised an exception: {exc}"
+        print(f"FATAL: {msg}", file=sys.stderr)
+        try:
+            _notify_escalate_message(msg)
+        except Exception:
+            pass
+        sys.exit(1)
+
+    # 4. dispatch on outcome — no loop (MUST 5) ---------------------------
+    step = outcome.step
+    if outcome.status == "completed":
+        print(
+            f"Step {step} completed. Continuing orchestration...",
+            file=sys.stderr,
+        )
+        # Auto-continue by handing control to the orchestrator body —
+        # it owns the only legitimate resume loop (MUST 5).
+        run_docs_orchestrator(config, orch_config)
+        return
+
+    if outcome.status == "waiting":
+        print(
+            f"Step {step} still waiting. "
+            f"Run resume again with the next response.",
+            file=sys.stderr,
+        )
+        return
+
+    # failed
+    print(f"ERROR: resume failed: {outcome.error}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _should_use_interactive_resume(mode: str) -> bool:
     """Determine whether to prompt in the terminal for planning questions."""
     if mode == "always":
@@ -555,6 +686,8 @@ def cli() -> None:
                        help="Run mode: watch (Phase 1) / harness (Phase 2) / meta (Phase 3) / docs-orchestrator (auto docs generation) / planning (runtime handoff)")
     parser.add_argument("--docs-mode", type=str, choices=["auto", "manual"], default="auto",
                        help="Docs-orchestrator mode: auto (AI decides) / manual (user decides). Only used with --mode docs-orchestrator")
+    parser.add_argument("--docs-subcommand", type=str, choices=["run", "resume"], default="run",
+                       help="docs-orchestrator subcommand: run (default) / resume (only used with --mode docs-orchestrator)")
     parser.add_argument("--manual-override", type=str, default="",
                        help="Comma-separated domain list for manual override in docs-orchestrator mode")
     parser.add_argument("--project-mode", type=str, choices=["greenfield", "brownfield"], default="",
@@ -576,7 +709,8 @@ def cli() -> None:
     parser.add_argument("--response-kind", type=str, choices=["answer", "approval"], default="answer",
                        help="Response kind for resume (only used with --mode planning --planning-subcommand resume)")
     parser.add_argument("--interactive-resume", type=str, choices=["auto", "always", "never"], default="auto",
-                       help="Prompt in the current terminal for planning questions instead of requiring --response")
+                       help="Prompt in the current terminal for waiting questions instead of requiring --response. "
+                            "Applies to both planning resume and docs-orchestrator resume.")
     parser.add_argument("--estimate", action="store_true", default=False,
                        help="Print session estimate and exit (only used with --mode planning)")
     parser.add_argument("description", nargs="?", default="",
@@ -606,7 +740,14 @@ def cli() -> None:
             orch_config.manual_override = [
                 d.strip() for d in args.manual_override.split(",") if d.strip()
             ]
-        run_docs_orchestrator(config, orch_config)
+        orch_config.interactive_resume = _should_use_interactive_resume(
+            args.interactive_resume
+        )
+
+        if args.docs_subcommand == "resume":
+            _run_docs_orchestrator_resume(args, config, orch_config)
+        else:
+            run_docs_orchestrator(config, orch_config)
     elif args.mode == "harness":
         harness_config = load_harness_config(Path(args.config), config)
         run_harness(config, harness_config)

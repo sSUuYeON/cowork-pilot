@@ -1,7 +1,7 @@
 {
   "context": {
-    "run_dir": "/Users/yeonsu/autoagent/cowork-pilot",
-    "project_dir": "/Users/yeonsu/autoagent/cowork-pilot",
+    "run_dir": "/sessions/laughing-tender-babbage/mnt/cowork-pilot",
+    "project_dir": "/sessions/laughing-tender-babbage/mnt/cowork-pilot",
     "target_version": "",
     "mode": "",
     "explicit_mode": false,

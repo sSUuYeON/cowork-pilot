@@ -1,0 +1,18 @@
+작업을 끝냈다고 주장합니다.
+
+<COWORK_PILOT_EVENT>
+event_id: malformed_1
+reason: type line missing
+assumption: badly malformed block
+confidence: medium
+impact: medium
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: STAGE_COMPLETE
+stage: analysis_and_extracts
+event_id: analysis_and_extracts_done
+reason: All outputs written successfully
+summary: 분석 리포트와 원문 추출 파일을 작성함
+outputs:
+  - docs/generated/analysis-report.md
+</COWORK_PILOT_EVENT>

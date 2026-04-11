@@ -41,11 +41,34 @@ domain-extracts에는 원본 기획서의 해당 부분을 **그대로 복사**�
 
 domain-extracts의 기능별 파일은 **self-contained** 단위여야 한다. 한 문단이 2개 이상의 기능에 관련되면 양쪽 다 복사하여 중복을 허용한다. "shared.md 참조" 같은 간접 참조는 금지한다.
 
-**3계층 중복 관리 규칙**:
+**3계층 중복 관리 규칙** (각 계층의 생성 조건은 명확하게 구분된다):
 
-- **`shared.md`**: 모든 도메인이 참조하는 기술 스택, 설계 원칙, 공통 데이터 타입
-- **`_overview.md`**: 해당 도메인 내 여러 기능이 공유하는 맥락 (도메인 수준 비즈니스 규칙, 공통 플로우)
-- **기능별 `{기능}.md`**: 해당 기능에 직접 관련된 원문. self-contained — 이 파일만 읽으면 해당 기능의 전체 맥락을 파악할 수 있어야 함
+- **`shared.md`** — **항상 필수.** 2개 이상의 도메인이 실제로 참조하는 전역 공통 정보(기술 스택, 설계 원칙, 공통 데이터 타입)만 포함한다. Phase 1 품질 게이트에서 누락 시 **hard fail**.
+- **`domain/_overview.md`** — **조건부(optional).** 한 도메인 내 **2개 이상의 feature가 실제로 공유하는 맥락**(도메인 수준 비즈니스 규칙, 공통 플로우)이 있을 때만 생성한다. 공유 맥락이 없거나 `shared.md` 또는 단일 feature 파일만으로 충분하면 **생성하지 않는다**. 품질 게이트에서 누락은 **hard fail이 아니라 warning**에 그친다.
+- **`domain/{feature}.md`** — **항상 필수.** 단일 feature 전용 원문. self-contained — 이 파일만 읽으면 해당 feature의 전체 맥락을 파악할 수 있어야 한다. Phase 1 품질 게이트에서 누락 시 **hard fail**.
+
+**Overview 생성 여부는 `analysis-report.md`의 "Domain Overview Decisions" 표가 단일 진실의 원천이다.** Phase 1(domain 모드)은 `analysis-report.md`에 아래 형식의 표를 반드시 기록한다:
+
+```markdown
+## Domain Overview Decisions
+
+| domain | overview_needed | reason |
+|---|---|---|
+| host  | yes | create-poll / share-access / live-results / close-poll 이 poll lifecycle state와 host-only 권한 규칙을 공유 |
+| voter | no  | 공통 맥락은 shared.md로 충분하고, 각 voter feature는 self-contained |
+```
+
+- `overview_needed`는 `yes` / `no` 리터럴만 허용한다.
+- `reason`은 필수이며 비어 있을 수 없다.
+- `single` Phase 1 모드에서도 이 표는 생성되며, 보통 한 줄(프로젝트 slug 또는 단일 도메인 이름)이 들어간다.
+
+**품질 게이트 동작**:
+
+- Phase 1 품질 게이트는 `missing_shared`, `missing_features`는 hard fail로, `missing_overviews`는 warning으로 분리해서 보고한다.
+- `missing_overviews` warning의 판단은 두 개의 독립 입력을 쓴다: (1) 위 표에서 `overview_needed = yes`로 선언된 도메인과 (2) 실제 파일시스템에서 해당 `_overview.md`의 존재 여부. 두 입력은 절대 뒤섞지 않는다.
+- **레거시 호환**: 결정 표가 아직 없는 기존 프로젝트를 재실행해도 hard fail이 발생하지 않는다. Phase 1이 다시 돌면 결정 표가 자동으로 채워진다.
+
+**하위 phase의 동작**: Phase 2/3 템플릿은 `_overview.md` 경로를 **절대 무조건 참조하지 않는다.** 프롬프트 렌더러가 `extracts/` 디렉토리를 스캔해 실제로 존재하는 overview 파일만 `available_extracts`에 담아 템플릿에 전달하며, 템플릿은 Jinja `{% if %}` 블록으로 감싼 뒤에만 해당 경로를 출력한다. 디스크에 없는 `_overview.md`는 프롬프트에 나타나지 않는다.
 
 **중복 추적**: 복사할 때 해당 문단 앞에 `<!-- SOURCE: 원본파일명#섹션 -->` 주석을 달아 출처를 추적한다. Phase 4-1 정합성 검사에서 같은 SOURCE 태그를 가진 내용의 모순 여부를 확인할 수 있다.
 
@@ -236,14 +259,14 @@ docs/generated/
 │   ├── booking--reservation.md
 │   └── booking--calendar.md
 ├── domain-extracts/               ← Phase 1 산출물 (원문 추출)
-│   ├── shared.md                  ← 공통 정보 (기술 스택, 설계 원칙)
+│   ├── shared.md                  ← 공통 정보 (기술 스택, 설계 원칙) — 항상 생성
 │   ├── payment/
-│   │   ├── _overview.md           ← 결제 도메인 전체 맥락 (짧게)
+│   │   ├── _overview.md           ← (선택) Domain Overview Decisions 표가 yes일 때만 생성
 │   │   ├── payment-methods.md     ← 결제 수단 관련 원문
 │   │   ├── refund.md              ← 환불 관련 원문
 │   │   └── settlement.md          ← 정산 관련 원문
 │   └── booking/
-│       ├── _overview.md
+│       ├── _overview.md           ← (선택) 없을 수도 있음 — 존재할 때만 Phase 2/3이 참조
 │       ├── reservation.md
 │       └── calendar.md
 ├── exec-plan-outline.md           ← Phase 5 outline 산출물 (중간 산출물이므로 generated/ 내에 위치)
@@ -365,9 +388,9 @@ class GateResult:
 **각 세션이 읽는 파일**:
 - `docs/generated/references/checklists.md` — 체크리스트 정의
 - `docs/generated/analysis-report.md` — 프로젝트 전체 맥락
-- `docs/generated/domain-extracts/shared.md` — 공통 정보
-- `docs/generated/domain-extracts/{도메인}/{기능}.md` — 해당 기능 원문
-- `docs/generated/domain-extracts/{도메인}/_overview.md` — 도메인 맥락
+- `docs/generated/domain-extracts/shared.md` — 공통 정보 (항상 존재)
+- `docs/generated/domain-extracts/{도메인}/{기능}.md` — 해당 기능 원문 (항상 존재)
+- `docs/generated/domain-extracts/{도메인}/_overview.md` — 도메인 맥락 (**선택 사항**; `Domain Overview Decisions` 표에서 `overview_needed = yes`이고 파일이 실제로 존재할 때만 프롬프트에 포함된다. 파일이 없으면 이 줄은 자동으로 생략된다.)
 
 **세션 프롬프트 (manual 모드)**:
 ```

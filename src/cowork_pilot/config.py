@@ -125,6 +125,9 @@ class DocsOrchestratorConfig:
     engine_command: str = "claude"
     engine_args: list[str] = field(default_factory=lambda: ["-p"])
 
+    # Interactive resume (Codex waiting 상태에서 같은 터미널로 prompt 여부)
+    interactive_resume: bool = False
+
 
 def load_docs_orchestrator_config(
     path: Path, base_config: Config | None = None

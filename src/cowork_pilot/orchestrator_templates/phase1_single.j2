@@ -2,6 +2,8 @@
 프로젝트 경로: {{ project_dir }}
 원본 기획서: {{ source_docs | join(', ') }}
 
+{% include "_partials/overview_boundary_rules.md.j2" %}
+
 읽어야 할 파일:
 {% for doc in source_docs %}
 - {{ doc }}
@@ -9,11 +11,34 @@
 - {{ project_dir }}/docs/generated/references/output-formats.md
 - {{ project_dir }}/docs/generated/references/project-conventions.md
 
+### `analysis-report.md` 필수 섹션: Domain Overview Decisions
+
+`analysis-report.md` 안에 아래 형식의 표를 반드시 포함하라. 이 표는 `_overview.md` 생성 여부의 유일한 기계 판독 계약이다.
+
+{% raw %}
+```md
+## Domain Overview Decisions
+
+| domain | overview_needed | reason |
+|---|---|---|
+| <도메인명> | yes | <overview가 필요한 이유, 1~2 문장> |
+| <도메인명> | no | <overview가 불필요한 이유, 1~2 문장> |
+```
+{% endraw %}
+
+규칙:
+- 헤딩은 정확히 `## Domain Overview Decisions`.
+- 컬럼 순서는 `domain | overview_needed | reason` 고정.
+- `overview_needed`는 문자 그대로 `yes` 또는 `no`만 허용.
+- `reason`은 비어 있을 수 없다.
+- `domain` 값은 본 보고서의 다른 섹션에서 쓴 도메인 디렉토리 이름과 일치해야 한다.
+- 단일 도메인 프로젝트라도 이 표는 한 행으로 반드시 작성한다.
+
 다음을 수행하라:
 1. 원본 기획서를 모두 읽는다
 2. 프로젝트 타입을 추론한다
 3. 도메인과 기능을 식별하고 분할 계획을 수립한다
-4. analysis-report.md를 작성한다
+4. analysis-report.md를 작성한다 (위의 `Domain Overview Decisions` 표 포함)
 5. domain-extracts/를 생성한다
    - 중요: "요약"하지 말고 관련 원문을 그대로 복사하라
    - 관련 없는 부분만 제거하라
@@ -25,10 +50,13 @@
 
 출력 파일:
 - {{ project_dir }}/docs/generated/analysis-report.md
-- {{ project_dir }}/docs/generated/domain-extracts/ (도메인별/기능별 파일)
+- {{ project_dir }}/docs/generated/domain-extracts/
 - {{ project_dir }}/docs/generated/domain-extracts/shared.md
 
+`_overview.md`는 각 도메인 디렉토리에서 조건부 산출물이다. 생성 여부는 `analysis-report.md`의 `Domain Overview Decisions` 표를 기준으로 판단하며, 판단 기준은 "문서 경계 규칙 > overview 생성 판정 체크리스트"를 따른다. `overview_needed=no`인 도메인에는 파일을 만들지 마라.
+
 docs/generated/references/output-formats.md와 project-conventions.md를 참고하라.
+`docs/generated/domain-extracts/` 아래에 도메인별/기능별 파일을 생성하라.
 
 품질 규칙:
 - "요약"하지 말고 원문을 그대로 복사하라

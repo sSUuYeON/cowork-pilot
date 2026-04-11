@@ -1,0 +1,20 @@
+{# Shared partial: document-boundary rules for Phase 1 prompts (shared.md / _overview.md / feature.md) #}
+### 문서 경계 규칙 (반드시 준수)
+
+아래 3층 분리 규칙을 반드시 지켜라. 판단이 애매하면 상위 레이어에 올리지 말고 기본값으로 `feature.md`에 남겨라.
+
+1. **`shared.md`**: 2개 이상 도메인이 참조하는 전역 공통 정보만 담는다. 프로젝트 개요, 목표, 공통 데이터 구조, 기술 스택, 전역 규칙이 대표 예시다.
+2. **`{domain}/_overview.md`**: 한 도메인의 2개 이상 feature가 실제로 공유하는 상태/용어/불변조건/권한 규칙/공통 워크플로/공통 데이터 모델이 있을 때만 생성한다. 공통 맥락이 없거나, 느낌만 있고 본문으로 쓰면 10줄 미만이거나, 사실상 한 feature 전용 내용이면 만들지 않는다.
+3. **`{domain}/feature.md`**: 단일 feature 전용 정보만 담는다. 여러 feature에 걸쳐 공유되는 내용은 올려 보낸다.
+
+**overview 생성 판정 체크리스트**
+
+- yes 조건 (모두 충족해야 `_overview.md` 생성)
+  - 해당 도메인에 feature가 2개 이상 존재한다.
+  - 공통 상태 머신, 용어, 불변조건, 권한 규칙, 공통 워크플로, 공통 데이터 모델 중 하나 이상이 2개 이상 feature에 걸친다.
+  - 그 공통 내용을 각 feature 파일에 복사했을 때 중복 source block이 2개 이상 생긴다.
+- no 조건 (하나라도 해당하면 `_overview.md` 생성 금지)
+  - 그 도메인의 feature가 0개 또는 1개다.
+  - 내용이 사실상 전역 공통이라 `shared.md`에 들어가야 한다.
+  - 내용이 사실상 단일 feature 전용이다.
+  - 예상 본문이 10줄 미만 또는 2개 미만의 source block이어서 ceremonial overview가 된다.

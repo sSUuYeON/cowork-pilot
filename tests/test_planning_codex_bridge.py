@@ -39,6 +39,37 @@ def test_extract_terminal_assistant_message_returns_last_completed_message() -> 
     assert extract_terminal_assistant_message(lines) == "last"
 
 
+def test_extract_terminal_assistant_message_reads_response_item_assistant_message() -> None:
+    lines = [
+        (
+            '{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text",'
+            '"text":"ignored"}]}}'
+        ),
+        (
+            '{"type":"response_item","payload":{"type":"message","role":"assistant","content":'
+            '[{"type":"output_text","text":"final-from-response-item"}]}}'
+        ),
+    ]
+
+    assert extract_terminal_assistant_message(lines) == "final-from-response-item"
+
+
+def test_extract_terminal_assistant_message_prefers_task_complete_message() -> None:
+    lines = [
+        (
+            '{"type":"response_item","payload":{"type":"message","role":"assistant","content":'
+            '[{"type":"output_text","text":"mid"}]}}'
+        ),
+        '{"type":"event_msg","payload":{"type":"agent_message","message":"almost-final"}}',
+        (
+            '{"type":"event_msg","payload":{"type":"task_complete",'
+            '"last_agent_message":"final-from-task-complete"}}'
+        ),
+    ]
+
+    assert extract_terminal_assistant_message(lines) == "final-from-task-complete"
+
+
 def test_build_exec_command_matches_harness_contract_exactly() -> None:
     cmd = build_exec_command(
         "hello world",

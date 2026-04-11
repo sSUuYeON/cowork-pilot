@@ -126,6 +126,29 @@ def test_summarize_codex_event_formats_command_and_message():
     assert message_text == "작업을 마쳤습니다."
 
 
+def test_summarize_codex_event_formats_response_item_and_task_complete():
+    response_lines, response_message = _summarize_codex_event({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "중간 최종안"}],
+        },
+    })
+    complete_lines, complete_message = _summarize_codex_event({
+        "type": "event_msg",
+        "payload": {
+            "type": "task_complete",
+            "last_agent_message": "진짜 최종안",
+        },
+    })
+
+    assert response_lines == ["assistant: 중간 최종안"]
+    assert response_message == "중간 최종안"
+    assert complete_lines == ["task complete"]
+    assert complete_message == "진짜 최종안"
+
+
 def test_read_codex_event_stream_handles_large_json_line():
     class FakeStream:
         def __init__(self, chunks: list[bytes]):

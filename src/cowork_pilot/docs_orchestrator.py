@@ -19,8 +19,26 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from dataclasses import dataclass
+from typing import Literal
+
 from cowork_pilot.config import Config, DocsOrchestratorConfig
-from cowork_pilot.orchestrator_prompts import build_session_prompt, get_section_keywords
+from cowork_pilot.docs_orchestrator_codex import CodexStepResult, run_codex_step
+from cowork_pilot.docs_orchestrator_runtime import (
+    cleanup_stale_runtime,
+    clear_runtime,
+    load_runtime,
+    runtime_is_waiting,
+    write_runtime,
+)
+from cowork_pilot.docs_orchestrator_terminal_ui import prompt_from_runtime_payload
+from cowork_pilot.orchestrator_prompts import (
+    build_codex_session_prompt,
+    build_session_prompt,
+    compute_available_extracts,
+    get_section_keywords,
+    load_overview_reasons,
+)
 from cowork_pilot.orchestrator_state import (
     OrchestratorState,
     StepStatus,
@@ -36,6 +54,10 @@ from cowork_pilot.orchestrator_state import (
     save_state,
 )
 from cowork_pilot.quality_gate import GateResult, check_phase1_quality
+from cowork_pilot.orchestrator.quality_gate import (
+    Phase1Result,
+    evaluate_phase1,
+)
 
 
 # ── Constants ───────────────────────────────────────────────────────
@@ -67,10 +89,35 @@ def _parse_expected_files(prompt: str) -> list[Path]:
     for line in block.strip().split("\n"):
         line = line.strip()
         if line.startswith("- "):
-            path_str = line[2:].strip()
+            path_str = _sanitize_expected_path(line[2:].strip())
             if path_str:
                 paths.append(Path(path_str))
     return paths
+
+
+def _sanitize_expected_path(path_str: str) -> str:
+    """Normalize prompt bullet text into a machine-readable output path.
+
+    Keeps current prompts backward-compatible by stripping legacy inline
+    directory annotations like:
+    ``/docs/generated/domain-extracts/ (도메인별/기능별 파일)``
+
+    Also drops bullets that contain ``<…>`` angle-bracket placeholders.
+    Those are prompt-only symbolic stand-ins (e.g.
+    ``.../<feature>.md (feature 개수만큼)``) that address the LLM, not the
+    filesystem; letting them reach :func:`_check_output_files` would make
+    the orchestrator wait forever on a literal file named
+    ``<feature>.md``. Per-feature completeness is the responsibility of
+    :func:`cowork_pilot.orchestrator.quality_gate.evaluate_phase1`, not of
+    the session-completion detector.
+    """
+    path_str = re.sub(r"\s+<!--.*?-->\s*$", "", path_str)
+    if re.search(r"<[^>]+>", path_str):
+        return ""
+    directory_annotation = re.match(r"^(.*?/)\s+\([^)\n]+\)\s*$", path_str)
+    if directory_annotation:
+        return directory_annotation.group(1).strip()
+    return path_str.strip()
 
 
 # ── Index generation ───────────────────────────────────────────────
@@ -129,6 +176,109 @@ def _generate_specs_index(specs_dir: Path) -> None:
     print(f"  Generated {index_path}", file=sys.stderr)
 
 
+# ── Interactive resume helper ──────────────────────────────────────
+
+_DEFAULT_MAX_INTERACTIVE_RESUMES = 20
+
+
+def _resolve_waiting_runtime_interactively(
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    state_path: Path,
+    *,
+    max_interactive_resumes: int = _DEFAULT_MAX_INTERACTIVE_RESUMES,
+) -> OrchestratorState | None:
+    """Resolve a waiting Codex runtime by prompting the user in-process.
+
+    This is the in-process interactive loop for docs-orchestrator (spec
+    Chunk 4). It repeatedly:
+
+    1. Loads the waiting runtime sidecar.
+    2. Prompts the user via the docs terminal UI.
+    3. Calls :func:`resume_waiting_docs_step` to apply the answer.
+    4. Loops while the step remains in ``waiting``.
+
+    Return-value contract (see spec MUST 1, MUST 2, MUST 4):
+
+    - ``None`` when the user cancels (EOF/Ctrl-C), when the
+      ``max_interactive_resumes`` cap is reached, or when the helper needs
+      to bail out without progress. The caller MUST treat this as "pause
+      and return" — it MUST NOT fall through to the next phase.
+    - An :class:`OrchestratorState` otherwise. On both ``completed`` and
+      ``failed`` outcomes the latest state is returned. To distinguish
+      the two the caller inspects the post-helper runtime sidecar:
+      ``load_runtime(project_dir)`` returns ``None`` on completed and a
+      payload with ``runtime_state == "failed"`` on failed. On ``failed``
+      the caller MUST ``return`` immediately (MUST 2) — it MUST NOT
+      ``continue`` the outer loop.
+
+    Per MUST 4 the returned state is the single source of truth — the
+    caller MUST assign ``state = returned_state`` and MUST NOT re-read
+    the state file.
+    """
+    # Local import to avoid the ``docs_orchestrator`` ↔
+    # ``docs_orchestrator_resume`` import cycle (the resume module imports
+    # helpers from this module at import time).
+    from cowork_pilot.docs_orchestrator_resume import resume_waiting_docs_step
+
+    attempts = 0
+    while runtime_is_waiting(project_dir):
+        if attempts >= max_interactive_resumes:
+            print(
+                "docs-orchestrator paused: interactive resume attempt cap "
+                f"reached ({max_interactive_resumes}).\n"
+                "Run with --docs-subcommand resume to continue.",
+                file=sys.stderr,
+            )
+            return None
+
+        runtime = load_runtime(project_dir)
+        if runtime is None:
+            # Runtime file vanished between the guard and the load — treat
+            # it as "resolved externally" and refresh state from disk.
+            return load_state(state_path)
+
+        response = prompt_from_runtime_payload(runtime)
+        if response is None:
+            # User cancelled (EOF / Ctrl-C). Spec MUST 1: caller pauses.
+            return None
+
+        attempts += 1
+        try:
+            outcome = resume_waiting_docs_step(
+                config,
+                orch_config,
+                response_text=response.text,
+                response_kind=response.kind,
+            )
+        except RuntimeError as exc:
+            print(
+                f"docs-orchestrator resume failed: {exc}",
+                file=sys.stderr,
+            )
+            return None
+
+        if outcome.status == "completed":
+            return outcome.state
+
+        if outcome.status == "failed":
+            print(
+                f"docs-orchestrator step {outcome.step} failed: "
+                f"{outcome.error}",
+                file=sys.stderr,
+            )
+            # Spec MUST 2: caller returns; do not loop further.
+            return outcome.state
+
+        # waiting → loop continues with updated runtime payload.
+
+    # Runtime was not waiting on entry (or became non-waiting between the
+    # check and the loop). Refresh the state so the caller still has the
+    # latest view without violating MUST 4 for this path.
+    return load_state(state_path)
+
+
 # ── Public entry point ──────────────────────────────────────────────
 
 
@@ -149,6 +299,54 @@ def run_docs_orchestrator(
 
     # Load or create state
     state = load_state(state_path)
+
+    # Codex-specific: clean up stale runtime sidecar before any recovery (§5.2, §7)
+    if getattr(orch_config, "engine", "claude") == "codex":
+        try:
+            cleanup_stale_runtime(state=state, project_dir=project_dir)
+        except RuntimeError as exc:
+            print(f"FATAL: {exc}", file=sys.stderr)
+            _notify_escalate_message(str(exc))
+            return
+
+        # If a waiting runtime is still present, decide between interactive
+        # resume (same-process prompt loop) and the legacy out-of-process
+        # pause. See spec Chunk 4 §4-2 and MUST 2 / MUST 4.
+        if runtime_is_waiting(project_dir):
+            if getattr(orch_config, "interactive_resume", False):
+                returned_state = _resolve_waiting_runtime_interactively(
+                    config, orch_config, project_dir, state_path,
+                )
+                if returned_state is None:
+                    # User cancelled, hit the resume cap, or the helper
+                    # bailed out. Fall back to the legacy pause message.
+                    print(
+                        "docs-orchestrator paused: Codex session waiting for user input.\n"
+                        "Run with --docs-subcommand resume --response '...' to continue.",
+                        file=sys.stderr,
+                    )
+                    return
+                # MUST 4: use the helper's returned state as the single
+                # source of truth — do NOT call load_state() again.
+                state = returned_state
+                # MUST 2: if the helper surfaced a failed outcome, the
+                # runtime sidecar will still be present with
+                # runtime_state == "failed". In that case we must return
+                # immediately rather than fall through to the main loop.
+                post_runtime = load_runtime(project_dir)
+                if (
+                    post_runtime is not None
+                    and str(post_runtime.get("runtime_state", ""))
+                    == "failed"
+                ):
+                    return
+            else:
+                print(
+                    "docs-orchestrator paused: Codex session waiting for user input.\n"
+                    "Run with --docs-subcommand resume --response '...' to continue.",
+                    file=sys.stderr,
+                )
+                return
 
     # Recover from a previous crash (§8.3)
     if state.current.get("status") == "running":
@@ -226,6 +424,49 @@ def run_docs_orchestrator(
             break
 
         save_state(state, state_path)
+
+        # After each phase, check whether the Codex backend is now waiting.
+        # If so, either run the in-process interactive resume loop (when
+        # enabled) or fall back to pausing so the user can resume via the
+        # CLI. See spec Chunk 4 §4-3 and MUST 2 / MUST 4.
+        if (
+            getattr(orch_config, "engine", "claude") == "codex"
+            and runtime_is_waiting(project_dir)
+        ):
+            if getattr(orch_config, "interactive_resume", False):
+                returned_state = _resolve_waiting_runtime_interactively(
+                    config, orch_config, project_dir, state_path,
+                )
+                if returned_state is None:
+                    print(
+                        "docs-orchestrator paused: waiting for user response.\n"
+                        "Run with --docs-subcommand resume to continue.",
+                        file=sys.stderr,
+                    )
+                    return
+                # MUST 4: the helper's returned state is the single source
+                # of truth for this execution path.
+                state = returned_state
+                # MUST 2: on failed, runtime is still present with
+                # runtime_state == "failed". Return instead of continuing
+                # the outer loop.
+                post_runtime = load_runtime(project_dir)
+                if (
+                    post_runtime is not None
+                    and str(post_runtime.get("runtime_state", ""))
+                    == "failed"
+                ):
+                    return
+                # Completed: fall through to the next iteration of the
+                # outer ``while True`` loop (continue the state machine).
+                continue
+
+            print(
+                "docs-orchestrator paused: waiting for user response.\n"
+                "Run with --docs-subcommand resume to continue.",
+                file=sys.stderr,
+            )
+            return
 
 
 # ── Phase 0 ─────────────────────────────────────────────────────────
@@ -368,15 +609,27 @@ def _run_phase_1(
         expected_files = _parse_expected_files(prompt)
 
         watch_mode = _determine_watch_mode("phase_1", orch_config)
-        jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-        if jsonl_path is None:
-            return _update_state_error(state, "phase_1", "세션 열기 실패")
-
-        completed = _wait_for_session_completion(
-            jsonl_path, expected_files, config, orch_config, watch_mode,
+        outcome = _execute_orchestrator_step(
+            step_name="phase_1",
+            prompt=prompt,
+            prompt_phase="phase1_single",
+            prompt_kwargs=dict(
+                project_dir=str(project_dir),
+                source_docs=source_docs,
+                domains=domains,
+                features=features,
+            ),
+            expected_files=expected_files,
+            watch_mode=watch_mode,
+            config=config,
+            orch_config=orch_config,
+            project_dir=project_dir,
+            base_path=base_path,
         )
-        if not completed:
-            return _update_state_error(state, "phase_1", "세션 완료 대기 실패")
+        if outcome.kind == "failed":
+            return _update_state_error(state, "phase_1", outcome.error or "단계 실행 실패")
+        if outcome.kind == "waiting":
+            return state  # runtime sidecar already written; caller loop pauses
 
         state = _update_state_completed(state, "phase_1", "1세션 처리 완료")
     else:
@@ -392,15 +645,27 @@ def _run_phase_1(
         expected_1a = [generated_dir / "analysis-report.md"]
         watch_mode = _determine_watch_mode("phase_1", orch_config)
 
-        jsonl_path = _open_orchestrator_session(prompt_1a, config, orch_config, base_path)
-        if jsonl_path is None:
-            return _update_state_error(state, "phase_1", "1a 세션 열기 실패")
-
-        completed = _wait_for_session_completion(
-            jsonl_path, expected_1a, config, orch_config, watch_mode,
+        outcome = _execute_orchestrator_step(
+            step_name="phase_1",
+            prompt=prompt_1a,
+            prompt_phase="phase1_single",
+            prompt_kwargs=dict(
+                project_dir=str(project_dir),
+                source_docs=source_docs,
+                domains=domains,
+                features=features,
+            ),
+            expected_files=expected_1a,
+            watch_mode=watch_mode,
+            config=config,
+            orch_config=orch_config,
+            project_dir=project_dir,
+            base_path=base_path,
         )
-        if not completed:
-            return _update_state_error(state, "phase_1", "1a 세션 완료 실패")
+        if outcome.kind == "failed":
+            return _update_state_error(state, "phase_1", outcome.error or "1a 단계 실행 실패")
+        if outcome.kind == "waiting":
+            return state
 
         # Session 1b-N: per domain extraction
         for domain in domains:
@@ -419,15 +684,29 @@ def _run_phase_1(
             domain_dir = generated_dir / "domain-extracts" / domain
             expected_1b = [domain_dir]  # Directory existence
 
-            jsonl_path = _open_orchestrator_session(prompt_1b, config, orch_config, base_path)
-            if jsonl_path is None:
-                return _update_state_error(state, step_name, f"도메인 {domain} 세션 열기 실패")
-
-            completed = _wait_for_session_completion(
-                jsonl_path, expected_1b, config, orch_config, watch_mode,
+            outcome = _execute_orchestrator_step(
+                step_name=step_name,
+                prompt=prompt_1b,
+                prompt_phase="phase1_domain",
+                prompt_kwargs=dict(
+                    project_dir=str(project_dir),
+                    source_docs=source_docs,
+                    domain=domain,
+                    features=domain_features,
+                ),
+                expected_files=expected_1b,
+                watch_mode=watch_mode,
+                config=config,
+                orch_config=orch_config,
+                project_dir=project_dir,
+                base_path=base_path,
             )
-            if not completed:
-                return _update_state_error(state, step_name, f"도메인 {domain} 완료 실패")
+            if outcome.kind == "failed":
+                return _update_state_error(
+                    state, step_name, outcome.error or f"도메인 {domain} 단계 실행 실패",
+                )
+            if outcome.kind == "waiting":
+                return state
 
             state = _update_state_completed(state, step_name, f"도메인 {domain} 추출 완료")
             save_state(state, state_path)
@@ -466,17 +745,40 @@ def _run_phase_1_5(
 
     gate_result = check_phase1_quality(project_dir, orch_config)
 
+    # Single-gate ownership (plan 2026-04-12-overview-optional, Chunk 3):
+    # * The NEW gate (:func:`evaluate_phase1`) is the sole owner of the
+    #   shared.md / feature files / _overview.md categories. Its
+    #   ``hard_failures`` halt the pipeline; its ``warnings`` are advisory.
+    # * The LEGACY gate (:func:`check_phase1_quality`) is the coverage
+    #   owner: it contributes ``coverage_ratio`` and the advisory
+    #   ``uncovered_sections``. Its historical Validation 3 output
+    #   (``missing_features``) is no longer consulted for pipeline halting
+    #   — the new gate is authoritative for presence checks.
+    # The final "passed" decision combines both: coverage_passed AND
+    # new_gate.ok. Either side can halt the pipeline for its own reason.
+    overview_gate: Phase1Result = evaluate_phase1(project_dir / "docs" / "generated")
+    for warning in overview_gate.warnings:
+        print(f"  WARNING: {warning}", file=sys.stderr)
+    for hard_failure in overview_gate.hard_failures:
+        print(f"  HARD FAIL: {hard_failure}", file=sys.stderr)
+
     print(f"  Coverage ratio: {gate_result.coverage_ratio:.2f}", file=sys.stderr)
     if gate_result.uncovered_sections:
         print(f"  Uncovered sections (advisory): {gate_result.uncovered_sections}", file=sys.stderr)
-    if gate_result.missing_features:
-        print(f"  Missing features: {gate_result.missing_features}", file=sys.stderr)
 
-    if gate_result.passed:
+    has_coverage_fail = gate_result.coverage_ratio < orch_config.coverage_ratio_threshold
+    has_new_gate_fail = not overview_gate.ok
+
+    if not has_coverage_fail and not has_new_gate_fail:
         # SOURCE 태그 미커버는 advisory — passed 판정에 포함되지 않음
         if gate_result.uncovered_sections:
             print(
                 f"  ⚠ SOURCE 태그 미커버 섹션 {len(gate_result.uncovered_sections)}개 (warning, 진행 허용)",
+                file=sys.stderr,
+            )
+        if overview_gate.warnings:
+            print(
+                f"  ⚠ Overview warnings {len(overview_gate.warnings)}개 (warning, 진행 허용)",
                 file=sys.stderr,
             )
         print("  Quality gate PASSED.", file=sys.stderr)
@@ -487,26 +789,27 @@ def _run_phase_1_5(
         )
         return state
 
-    # Gate failed — determine failure type
+    # Gate failed — assemble a human-readable note
     note_parts: list[str] = []
 
-    has_coverage_fail = gate_result.coverage_ratio < orch_config.coverage_ratio_threshold
-    has_feature_fail = len(gate_result.missing_features) > 0
-
     if has_coverage_fail:
-        note_parts.append(f"커버리지 {gate_result.coverage_ratio:.2f} < {orch_config.coverage_ratio_threshold}")
+        note_parts.append(
+            f"커버리지 {gate_result.coverage_ratio:.2f} < {orch_config.coverage_ratio_threshold}"
+        )
 
     if gate_result.uncovered_sections:
         # Advisory only — quality_gate.py §검증2와 일치:
         # AI 출력 형식이 SOURCE 태그를 정확히 포함하지 않을 수 있으므로 경고만 표시
         note_parts.append(f"미커버 섹션 {len(gate_result.uncovered_sections)}개 (advisory)")
 
-    if has_feature_fail:
-        note_parts.append(f"누락 기능 {len(gate_result.missing_features)}개")
+    if has_new_gate_fail:
+        note_parts.append(
+            f"Phase 1 필수 산출물 누락 {len(overview_gate.hard_failures)}건"
+        )
 
     note = "; ".join(note_parts)
 
-    # Validation 1 failure (coverage) → ESCALATE + rollback Phase 1
+    # Coverage failure → ESCALATE + rollback Phase 1
     if has_coverage_fail:
         print(f"  Quality gate FAILED (ESCALATE): {note}", file=sys.stderr)
         print("  → Phase 1을 롤백하여 재실행 가능하게 합니다.", file=sys.stderr)
@@ -515,15 +818,18 @@ def _run_phase_1_5(
         state = _update_state_error(state, "phase_1_5", f"ESCALATE: {note}")
         return state
 
-    # Validation 3 only (missing features) → supplementary sessions possible
-    if has_feature_fail:
-        print(f"  Quality gate FAILED (missing features only): {note}", file=sys.stderr)
+    # New gate hard failure (shared.md / features / overviews) → rollback Phase 1
+    if has_new_gate_fail:
+        print(
+            f"  Quality gate FAILED (new gate hard failures): {note}",
+            file=sys.stderr,
+        )
         print("  → Phase 1을 롤백하여 재실행 가능하게 합니다.", file=sys.stderr)
         state = _rollback_phase_1(state)
         state = _update_state_error(
             state,
             "phase_1_5",
-            f"누락 기능 보충 필요: {', '.join(gate_result.missing_features)}",
+            "Phase 1 필수 산출물 누락: " + "; ".join(overview_gate.hard_failures),
         )
         return state
 
@@ -676,25 +982,50 @@ def _run_phase_2(
             {"domain": d, "feature": f} for d, f in bundle
         ]
 
+        # Single-source overview context (plan Chunk 4 Step 5):
+        # explicit, non-hook-driven injection at the render call site.
+        extracts_info = compute_available_extracts(
+            project_dir / "docs" / "generated" / "domain-extracts"
+        )
+        overview_reasons = load_overview_reasons(project_dir)
+
         prompt = build_session_prompt(
             phase_template,
             project_dir=str(project_dir),
             features=features_for_prompt,
             domain=first_domain,
             feature=first_feature,
+            extracts=extracts_info,
+            overview_reasons=overview_reasons,
         )
 
         expected_files = _parse_expected_files(prompt)
 
-        jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-        if jsonl_path is None:
-            return _update_state_error(state, step_name, f"갭 분석 세션 열기 실패: {step_name}")
-
-        completed = _wait_for_session_completion(
-            jsonl_path, expected_files, config, orch_config, watch_mode,
+        outcome = _execute_orchestrator_step(
+            step_name=step_name,
+            prompt=prompt,
+            prompt_phase=phase_template,
+            prompt_kwargs=dict(
+                project_dir=str(project_dir),
+                features=features_for_prompt,
+                domain=first_domain,
+                feature=first_feature,
+                extracts=extracts_info,
+                overview_reasons=overview_reasons,
+            ),
+            expected_files=expected_files,
+            watch_mode=watch_mode,
+            config=config,
+            orch_config=orch_config,
+            project_dir=project_dir,
+            base_path=base_path,
         )
-        if not completed:
-            return _update_state_error(state, step_name, f"갭 분석 세션 완료 실패: {step_name}")
+        if outcome.kind == "failed":
+            return _update_state_error(
+                state, step_name, outcome.error or f"갭 분석 단계 실행 실패: {step_name}",
+            )
+        if outcome.kind == "waiting":
+            return state
 
         state = _update_state_completed(state, step_name, f"갭 분석 완료: {step_name}")
         save_state(state, state_path)
@@ -801,15 +1132,22 @@ def _run_phase_3_group_a(
     generated_dir = project_dir / _GENERATED_DIR
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 3-A 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase3_design_docs",
+        prompt_kwargs=dict(project_dir=str(project_dir)),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 3-A 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 3-A 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "design-docs 생성 완료")
     save_state(state, state_path)
@@ -871,15 +1209,29 @@ def _run_phase_3_group_b(
 
         expected_files = _parse_expected_files(prompt)
 
-        jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-        if jsonl_path is None:
-            return _update_state_error(state, step_name, f"Phase 3-B 세션 열기 실패: {step_name}")
-
-        completed = _wait_for_session_completion(
-            jsonl_path, expected_files, config, orch_config, watch_mode,
+        outcome = _execute_orchestrator_step(
+            step_name=step_name,
+            prompt=prompt,
+            prompt_phase="phase3_product_spec",
+            prompt_kwargs=dict(
+                project_dir=str(project_dir),
+                features=features_for_prompt,
+                domain=first_domain,
+                feature=first_feature,
+            ),
+            expected_files=expected_files,
+            watch_mode=watch_mode,
+            config=config,
+            orch_config=orch_config,
+            project_dir=project_dir,
+            base_path=base_path,
         )
-        if not completed:
-            return _update_state_error(state, step_name, f"Phase 3-B 세션 완료 실패: {step_name}")
+        if outcome.kind == "failed":
+            return _update_state_error(
+                state, step_name, outcome.error or f"Phase 3-B 단계 실행 실패: {step_name}",
+            )
+        if outcome.kind == "waiting":
+            return state
 
         state = _update_state_completed(state, step_name, f"product-spec 생성 완료: {step_name}")
         save_state(state, state_path)
@@ -901,22 +1253,43 @@ def _run_phase_3_group_c(
     save_state(state, state_path)
 
     watch_mode = _determine_watch_mode(step, orch_config)
+
+    # Single-source overview context (plan Chunk 4 Step 5):
+    # explicit, non-hook-driven injection at the render call site.
+    extracts_info = compute_available_extracts(
+        project_dir / "docs" / "generated" / "domain-extracts"
+    )
+    overview_reasons = load_overview_reasons(project_dir)
+
     prompt = build_session_prompt(
         "phase3_architecture",
         project_dir=str(project_dir),
+        extracts=extracts_info,
+        overview_reasons=overview_reasons,
     )
 
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 3-C 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase3_architecture",
+        prompt_kwargs=dict(
+            project_dir=str(project_dir),
+            extracts=extracts_info,
+            overview_reasons=overview_reasons,
+        ),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 3-C 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 3-C 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "ARCHITECTURE 등 생성 완료")
     save_state(state, state_path)
@@ -944,15 +1317,22 @@ def _run_phase_3_group_d(
 
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 3-D 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase3_agents",
+        prompt_kwargs=dict(project_dir=str(project_dir)),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 3-D 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 3-D 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "AGENTS.md 생성 완료")
     save_state(state, state_path)
@@ -1055,15 +1435,25 @@ def _run_phase_4_1(
 
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 4-1 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase4_consistency",
+        prompt_kwargs=dict(
+            project_dir=str(project_dir),
+            section_keywords=section_keywords,
+        ),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 4-1 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 4-1 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "정합성 검사 완료")
     save_state(state, state_path)
@@ -1106,15 +1496,25 @@ def _run_phase_4_2(
 
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 4-2 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase4_rescore",
+        prompt_kwargs=dict(
+            project_dir=str(project_dir),
+            features=feature_list_for_prompt,
+        ),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 4-2 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 4-2 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "체크리스트 재평가 완료")
     save_state(state, state_path)
@@ -1157,15 +1557,25 @@ def _run_phase_4_3(
 
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 4-3 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase4_quality",
+        prompt_kwargs=dict(
+            project_dir=str(project_dir),
+            forbidden_hits=forbidden_hits,
+        ),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 4-3 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 4-3 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "표현 품질 검사 + QUALITY_SCORE 생성 완료")
     save_state(state, state_path)
@@ -1223,15 +1633,22 @@ def _run_phase_5_outline(
     )
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, "Phase 5-outline 세션 열기 실패")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase5_outline",
+        prompt_kwargs=dict(project_dir=str(project_dir)),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, "Phase 5-outline 세션 완료 실패")
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or "Phase 5-outline 단계 실행 실패")
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, "exec-plan outline 설계 완료")
     save_state(state, state_path)
@@ -1273,15 +1690,28 @@ def _run_phase_5_detail(
     planning_dir.mkdir(parents=True, exist_ok=True)
     expected = _parse_expected_files(prompt)
 
-    jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
-    if jsonl_path is None:
-        return _update_state_error(state, step, f"Phase 5-detail 세션 열기 실패: {plan_name}")
-
-    completed = _wait_for_session_completion(
-        jsonl_path, expected, config, orch_config, watch_mode,
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase5_detail",
+        prompt_kwargs=dict(
+            project_dir=str(project_dir),
+            plan_number=plan_number,
+            plan_name=plan_bare_name,
+        ),
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
     )
-    if not completed:
-        return _update_state_error(state, step, f"Phase 5-detail 세션 완료 실패: {plan_name}")
+    if outcome.kind == "failed":
+        return _update_state_error(
+            state, step, outcome.error or f"Phase 5-detail 단계 실행 실패: {plan_name}",
+        )
+    if outcome.kind == "waiting":
+        return state
 
     state = _update_state_completed(state, step, f"exec-plan {plan_name} 상세 작성 완료")
     save_state(state, state_path)
@@ -1416,6 +1846,133 @@ def _notify_completion(total_sessions: int, total_errors: int, plan_count: int) 
         )
     except Exception:
         print("  (macOS notification failed)", file=sys.stderr)
+
+
+# ── Step execution helper (Codex exec mode) ─────────────────────────
+
+
+@dataclass(frozen=True)
+class StepExecutionOutcome:
+    """Result of :func:`_execute_orchestrator_step`.
+
+    ``kind`` is the three-valued outcome:
+        * ``"completed"`` — step finished successfully; caller should mark state completed
+        * ``"waiting"`` — Codex step is waiting for user input/approval; runtime sidecar is written; caller should return state unchanged
+        * ``"failed"``  — step execution failed; caller should mark state error
+    """
+
+    kind: Literal["completed", "waiting", "failed"]
+    error: str = ""
+
+
+def _execute_orchestrator_step(
+    *,
+    step_name: str,
+    prompt: str,
+    expected_files: list[Path],
+    watch_mode: bool,
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    base_path: Path,
+    prompt_phase: str | None = None,
+    prompt_kwargs: dict[str, object] | None = None,
+    codex_exec_config: object | None = None,
+) -> StepExecutionOutcome:
+    """Execute one orchestrator step via the Claude or Codex backend.
+
+    Claude branch: delegates to :func:`_open_orchestrator_session` +
+                   :func:`_wait_for_session_completion` unchanged.
+
+    Codex branch:  rebuilds the prompt via :func:`build_codex_session_prompt`
+                   (when ``prompt_phase`` is provided), calls
+                   :func:`run_codex_step`, writes the runtime sidecar on
+                   waiting, and returns a three-valued outcome.
+
+    Phase progression is NEVER updated here — that is the caller's job.
+    """
+    engine = getattr(orch_config, "engine", "claude")
+
+    if engine == "claude":
+        jsonl_path = _open_orchestrator_session(prompt, config, orch_config, base_path)
+        if jsonl_path is None:
+            return StepExecutionOutcome(kind="failed", error="세션 열기 실패")
+        ok = _wait_for_session_completion(
+            jsonl_path, expected_files, config, orch_config, watch_mode,
+        )
+        if not ok:
+            return StepExecutionOutcome(kind="failed", error="세션 완료 대기 실패")
+        return StepExecutionOutcome(kind="completed")
+
+    # Codex backend: rebuild prompt with wrapper (fallback to Claude prompt if unspecified)
+    if prompt_phase is not None:
+        codex_prompt = build_codex_session_prompt(
+            prompt_phase,
+            **(prompt_kwargs or {}),
+        )
+    else:
+        codex_prompt = prompt
+
+    codex_cmd = getattr(orch_config, "engine_command", "codex")
+    result: CodexStepResult = run_codex_step(
+        project_dir=project_dir,
+        step=step_name,
+        prompt=codex_prompt,
+        expected_files=expected_files,
+        codex_command=codex_cmd,
+        codex_extra_args=None,
+    )
+
+    if result.status == "waiting":
+        _save_codex_waiting_runtime(
+            project_dir=project_dir,
+            step_name=step_name,
+            result=result,
+        )
+        return StepExecutionOutcome(kind="waiting")
+
+    if result.status == "failed":
+        return StepExecutionOutcome(kind="failed", error=result.error)
+
+    return StepExecutionOutcome(kind="completed")
+
+
+def _save_codex_waiting_runtime(
+    *,
+    project_dir: Path,
+    step_name: str,
+    result: CodexStepResult,
+) -> None:
+    """Write ``orchestrator-runtime.json`` for a waiting Codex step."""
+    runtime_state = (
+        "waiting_for_input"
+        if result.waiting_kind == "input"
+        else "waiting_for_approval"
+    )
+    payload: dict[str, object] = {
+        "backend": "codex",
+        "step": step_name,
+        "runtime_state": runtime_state,
+        "resume_handle": result.resume_handle,
+        "resume_handle_kind": "codex_thread_id",
+        "pending_event_id": result.pending_event_id or "",
+        "pending_question": result.pending_question,
+        "pending_approval": result.pending_approval,
+    }
+    write_runtime(project_dir, payload)
+
+
+def _notify_escalate_message(msg: str) -> None:
+    """Send a macOS notification for a fatal orchestrator error.
+
+    Unlike :func:`_notify_escalate` which wraps a generic ESCALATE message,
+    this variant is used for FATAL docs-orchestrator startup/runtime errors.
+    """
+    try:
+        from cowork_pilot.responder import notify
+        notify("⚠️ docs-orchestrator FATAL", msg[:100], tts=False)
+    except Exception:
+        pass
 
 
 # ── Session management helpers ──────────────────────────────────────

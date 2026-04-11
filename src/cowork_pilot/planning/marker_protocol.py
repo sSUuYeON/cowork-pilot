@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 EVENT_START = "<COWORK_PILOT_EVENT>"
 EVENT_END = "</COWORK_PILOT_EVENT>"
+_BLOCK_PREVIEW_CHARS = 240
+_ASSUMPTION_ENUM_VALUES = {"low", "medium", "high"}
+_HUMAN_LOOP_MARKER_TYPES = {"INPUT_REQUIRED", "APPROVAL_REQUIRED", "NEEDS_HUMAN"}
+_REPEATABLE_BUNDLE_PREFIX_MARKER_TYPES = {"ASSUMPTION_LOG"}
+_BUNDLE_TERMINAL_MARKER_TYPES = {"STAGE_COMPLETE", "APPROVAL_REQUIRED", "NEEDS_HUMAN"}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -15,6 +23,13 @@ class MarkerEnvelope:
     payload: dict[str, object]
 
 
+@dataclass(frozen=True)
+class _InvalidMarkerBlock:
+    declared_type: str
+    reason: str
+    raw_block: str
+
+
 _TYPE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "INPUT_REQUIRED": ("question", "options", "recommended", "blocking"),
     "ASSUMPTION_LOG": ("assumption", "confidence", "impact"),
@@ -22,13 +37,6 @@ _TYPE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "STAGE_COMPLETE": ("summary", "outputs"),
     "NEEDS_HUMAN": ("issue", "why_ai_stopped", "suggested_next_action"),
 }
-
-_ALLOWED_BUNDLE_SEQUENCES: tuple[tuple[str, ...], ...] = (
-    ("ASSUMPTION_LOG", "STAGE_COMPLETE"),
-    ("ASSUMPTION_LOG", "APPROVAL_REQUIRED"),
-    ("ASSUMPTION_LOG", "NEEDS_HUMAN"),
-)
-
 
 def _strip_fenced_code_blocks(message: str) -> str:
     lines: list[str] = []
@@ -136,49 +144,166 @@ def _validate_type_specific_fields(marker_type: str, fields: dict[str, object]) 
     return all(field in fields for field in required)
 
 
+def _validate_type_specific_values(marker_type: str, fields: dict[str, object]) -> bool:
+    if marker_type == "ASSUMPTION_LOG":
+        return (
+            fields.get("confidence") in _ASSUMPTION_ENUM_VALUES
+            and fields.get("impact") in _ASSUMPTION_ENUM_VALUES
+        )
+    return True
+
+
 def _validate_bundle_combination(types: tuple[str, ...]) -> bool:
-    if len(types) <= 1:
+    if not types:
+        return False
+    if len(types) == 1:
         return True
-    return types in _ALLOWED_BUNDLE_SEQUENCES
+
+    terminal_type = types[-1]
+    if terminal_type not in _BUNDLE_TERMINAL_MARKER_TYPES:
+        return False
+
+    return all(
+        marker_type in _REPEATABLE_BUNDLE_PREFIX_MARKER_TYPES
+        for marker_type in types[:-1]
+    )
 
 
-def extract_terminal_marker_bundle(message: str) -> tuple[MarkerEnvelope, ...]:
+def _extract_declared_type(block: str) -> str:
+    """Best-effort marker type lookup.
+
+    If the block is too malformed to expose a `type:` line, return an empty
+    string. Unknown type means salvage is not allowed.
+    """
+    body = block.removeprefix(EVENT_START).removesuffix(EVENT_END).strip()
+    for raw_line in body.splitlines():
+        key, separator, value = raw_line.partition(":")
+        if separator and key.strip() == "type":
+            return value.strip()
+    return ""
+
+
+def _truncate_block_preview(block: str, limit: int = _BLOCK_PREVIEW_CHARS) -> str:
+    compact = " ".join(block.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+def _parse_marker_block(block: str) -> MarkerEnvelope:
+    fields = _parse_simple_yaml_subset(block)
+    if not all(required in fields for required in ("type", "stage", "event_id", "reason")):
+        raise ValueError("missing required common fields")
+
+    marker_type = str(fields["type"])
+    if not _validate_type_specific_fields(marker_type, fields):
+        raise ValueError(f"missing required fields for {marker_type}")
+    if not _validate_type_specific_values(marker_type, fields):
+        raise ValueError(f"invalid field values for {marker_type}")
+
+    payload = {
+        key: value
+        for key, value in fields.items()
+        if key not in {"type", "stage", "event_id", "reason"}
+    }
+    return MarkerEnvelope(
+        type=marker_type,
+        stage=str(fields["stage"]),
+        event_id=str(fields["event_id"]),
+        reason=str(fields["reason"]),
+        payload=payload,
+    )
+
+
+def _parse_bundle_blocks(blocks: list[str]) -> tuple[list[MarkerEnvelope], list[_InvalidMarkerBlock]]:
+    parsed: list[MarkerEnvelope] = []
+    invalid: list[_InvalidMarkerBlock] = []
+    for block in blocks:
+        try:
+            parsed.append(_parse_marker_block(block))
+        except ValueError as exc:
+            invalid.append(
+                _InvalidMarkerBlock(
+                    declared_type=_extract_declared_type(block),
+                    reason=str(exc),
+                    raw_block=block,
+                )
+            )
+    return (parsed, invalid)
+
+
+def _can_salvage_stage_complete(
+    parsed: list[MarkerEnvelope],
+    invalid_blocks: list[_InvalidMarkerBlock],
+) -> bool:
+    if not invalid_blocks:
+        return False
+
+    stage_complete_count = sum(marker.type == "STAGE_COMPLETE" for marker in parsed)
+    if stage_complete_count != 1:
+        return False
+
+    for marker in parsed:
+        if marker.type == "STAGE_COMPLETE":
+            continue
+        if marker.type in _HUMAN_LOOP_MARKER_TYPES:
+            return False
+
+    return all(block.declared_type == "ASSUMPTION_LOG" for block in invalid_blocks)
+
+
+def _log_stage_complete_salvage(invalid_blocks: list[_InvalidMarkerBlock]) -> None:
+    previews = [
+        (
+            f"type={block.declared_type or 'unknown'} "
+            f"reason={block.reason} preview={_truncate_block_preview(block.raw_block)}"
+        )
+        for block in invalid_blocks
+    ]
+    logger.warning(
+        "marker bundle salvage: kept STAGE_COMPLETE after dropping invalid ASSUMPTION_LOG blocks: %s",
+        previews,
+    )
+
+
+def _extract_terminal_marker_bundle(
+    message: str,
+    *,
+    allow_stage_complete_salvage: bool = False,
+) -> tuple[MarkerEnvelope, ...]:
     stripped = _strip_fenced_code_blocks(message)
     blocks = _find_last_contiguous_bundle(stripped)
     if not blocks:
         return ()
 
-    parsed: list[MarkerEnvelope] = []
-    for block in blocks:
-        try:
-            fields = _parse_simple_yaml_subset(block)
-        except ValueError:
+    parsed, invalid_blocks = _parse_bundle_blocks(blocks)
+    if invalid_blocks:
+        if not allow_stage_complete_salvage:
             return ()
-
-        if not all(required in fields for required in ("type", "stage", "event_id", "reason")):
+        if not _can_salvage_stage_complete(parsed, invalid_blocks):
             return ()
-
-        marker_type = str(fields["type"])
-        if not _validate_type_specific_fields(marker_type, fields):
-            return ()
-
-        payload = {
-            key: value
-            for key, value in fields.items()
-            if key not in {"type", "stage", "event_id", "reason"}
-        }
-        parsed.append(
-            MarkerEnvelope(
-                type=marker_type,
-                stage=str(fields["stage"]),
-                event_id=str(fields["event_id"]),
-                reason=str(fields["reason"]),
-                payload=payload,
-            )
-        )
+        _log_stage_complete_salvage(invalid_blocks)
+        return tuple(parsed)
 
     bundle_types = tuple(marker.type for marker in parsed)
     if not _validate_bundle_combination(bundle_types):
         return ()
 
     return tuple(parsed)
+
+
+def extract_terminal_marker_bundle(
+    message: str,
+    *,
+    allow_stage_complete_salvage: bool = False,
+) -> tuple[MarkerEnvelope, ...]:
+    """Parse the final contiguous marker bundle at the end of a message.
+
+    When `allow_stage_complete_salvage=True`, salvage is allowed only when the
+    sole invalid blocks are ASSUMPTION_LOG entries and a valid STAGE_COMPLETE
+    marker remains in the parsed bundle.
+    """
+    return _extract_terminal_marker_bundle(
+        message,
+        allow_stage_complete_salvage=allow_stage_complete_salvage,
+    )

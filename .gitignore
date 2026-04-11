@@ -41,3 +41,6 @@ logs/*.log
 # Distribution
 *.tar.gz
 *.zip
+
+# Cache
+cache/

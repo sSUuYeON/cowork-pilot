@@ -21,6 +21,7 @@ from cowork_pilot.docs_orchestrator import (
     _resolve_separator_fallback,
     _is_feature_in_completed_bundle,
     _notify_completion,
+    _parse_expected_files,
     _parse_outline_plans,
     _resolve_bundles,
     _run_final_completion,
@@ -39,6 +40,7 @@ from cowork_pilot.docs_orchestrator import (
     check_bundle_quality_degradation,
     run_docs_orchestrator,
 )
+from cowork_pilot.orchestrator_prompts import build_session_prompt
 from cowork_pilot.orchestrator_state import (
     OrchestratorState,
     StepStatus,
@@ -47,6 +49,7 @@ from cowork_pilot.orchestrator_state import (
     recover_running_step,
     save_state,
 )
+from cowork_pilot.orchestrator.quality_gate import Phase1Result
 from cowork_pilot.quality_gate import GateResult
 
 
@@ -450,7 +453,10 @@ class TestPhaseTransitionIntegration:
         orch_config: DocsOrchestratorConfig,
         tmp_path: Path,
     ):
-        """Phase 1.5 passes → step completed."""
+        """Phase 1.5 passes → step completed.
+
+        Both gates must report success: legacy coverage OK AND new gate ok=True.
+        """
         base_config.project_dir = str(tmp_path)
         state_path = tmp_path / "docs" / "generated" / "orchestrator-state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -461,8 +467,15 @@ class TestPhaseTransitionIntegration:
             uncovered_sections=[],
             missing_features=[],
         )
+        new_ok = Phase1Result(ok=True, hard_failures=[], warnings=[])
 
-        with patch("cowork_pilot.docs_orchestrator.check_phase1_quality", return_value=gate_result):
+        with patch(
+            "cowork_pilot.docs_orchestrator.check_phase1_quality",
+            return_value=gate_result,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.evaluate_phase1",
+            return_value=new_ok,
+        ):
             result = _run_phase_1_5(
                 phase1_completed_state, base_config, orch_config, tmp_path, state_path,
             )
@@ -505,6 +518,66 @@ class TestPhaseTransitionIntegration:
         assert "ESCALATE" in result.errors[-1]["error"]
         mock_notify.assert_called_once()
 
+    @patch("cowork_pilot.docs_orchestrator._notify_escalate")
+    def test_phase_1_5_halts_when_new_gate_hard_fails_even_if_legacy_passes(
+        self,
+        mock_notify: MagicMock,
+        phase1_completed_state: OrchestratorState,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+        tmp_path: Path,
+    ):
+        """Single-gate rewiring: new gate's hard_failures must halt the pipeline.
+
+        The legacy gate reports passed=True (coverage OK, no missing_features)
+        while the new gate reports ok=False with a hard_failure (e.g., the
+        analysis-report.md is missing or shared.md is missing). Before the
+        Chunk 3 single-gate rewiring, the orchestrator consulted only the
+        legacy gate's ``passed`` field and advanced to Phase 2 even though
+        the new gate had flagged a hard failure. This test pins the correct
+        behavior: phase_1_5 must NOT complete, the pipeline must report the
+        new gate's hard failure, and Phase 1 must be rolled back so the
+        extraction can re-run.
+        """
+        base_config.project_dir = str(tmp_path)
+        state_path = tmp_path / "docs" / "generated" / "orchestrator-state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        legacy_ok = GateResult(
+            passed=True,
+            coverage_ratio=0.95,
+            uncovered_sections=[],
+            missing_features=[],
+        )
+        new_fail = Phase1Result(
+            ok=False,
+            hard_failures=["domain-extracts/shared.md is missing (hard fail)"],
+            warnings=[],
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator.check_phase1_quality",
+            return_value=legacy_ok,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.evaluate_phase1",
+            return_value=new_fail,
+        ):
+            result = _run_phase_1_5(
+                phase1_completed_state, base_config, orch_config, tmp_path, state_path,
+            )
+
+        completed_steps = {s.step for s in result.completed}
+        assert "phase_1_5" not in completed_steps, (
+            "phase_1_5 must not complete when the new gate reports a hard failure"
+        )
+        # Phase 1 must be rolled back so the extraction can re-run.
+        assert "phase_1" not in completed_steps
+        assert len(result.errors) > 0
+        # The new gate's hard_failure message must surface in the error.
+        assert any(
+            "shared.md" in err.get("error", "") for err in result.errors
+        ), f"expected 'shared.md' in errors, got: {result.errors}"
+
     def test_phase_1_5_fail_missing_features_only(
         self,
         phase1_completed_state: OrchestratorState,
@@ -512,19 +585,37 @@ class TestPhaseTransitionIntegration:
         orch_config: DocsOrchestratorConfig,
         tmp_path: Path,
     ):
-        """Phase 1.5 missing features only → error but not ESCALATE."""
+        """Phase 1.5 new-gate hard failure (missing features) → rollback, not ESCALATE.
+
+        After the Chunk 3 single-gate rewiring, the new gate (``evaluate_phase1``)
+        owns feature / shared / overview presence checks. When the legacy
+        coverage gate is OK but the new gate reports hard_failures for missing
+        feature files, the pipeline must roll back Phase 1 without triggering
+        the ESCALATE path (which is reserved for coverage failures).
+        """
         base_config.project_dir = str(tmp_path)
         state_path = tmp_path / "docs" / "generated" / "orchestrator-state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
 
-        gate_result = GateResult(
-            passed=False,
+        legacy_ok = GateResult(
+            passed=True,
             coverage_ratio=0.9,
             uncovered_sections=[],
-            missing_features=["planning/결제"],
+            missing_features=[],
+        )
+        new_fail = Phase1Result(
+            ok=False,
+            hard_failures=["no feature files were produced under domain-extracts/"],
+            warnings=[],
         )
 
-        with patch("cowork_pilot.docs_orchestrator.check_phase1_quality", return_value=gate_result):
+        with patch(
+            "cowork_pilot.docs_orchestrator.check_phase1_quality",
+            return_value=legacy_ok,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.evaluate_phase1",
+            return_value=new_fail,
+        ):
             result = _run_phase_1_5(
                 phase1_completed_state, base_config, orch_config, tmp_path, state_path,
             )
@@ -535,7 +626,8 @@ class TestPhaseTransitionIntegration:
         assert "phase_1" not in completed_steps
         assert len(result.errors) > 0
         assert "ESCALATE" not in result.errors[-1]["error"]
-        assert "보충" in result.errors[-1]["error"]
+        assert "Phase 1 필수 산출물 누락" in result.errors[-1]["error"]
+        assert "feature files" in result.errors[-1]["error"]
 
     @patch("cowork_pilot.docs_orchestrator._confirm_proceed", return_value=True)
     @patch("cowork_pilot.docs_orchestrator._copy_references")
@@ -561,8 +653,15 @@ class TestPhaseTransitionIntegration:
             uncovered_sections=[],
             missing_features=[],
         )
+        new_ok = Phase1Result(ok=True, hard_failures=[], warnings=[])
 
-        with patch("cowork_pilot.docs_orchestrator.check_phase1_quality", return_value=gate_result):
+        with patch(
+            "cowork_pilot.docs_orchestrator.check_phase1_quality",
+            return_value=gate_result,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.evaluate_phase1",
+            return_value=new_ok,
+        ):
             run_docs_orchestrator(base_config, orch_config)
 
         # Verify state file
@@ -717,6 +816,87 @@ class TestOutputFileChecks:
     def test_empty_expected_files(self):
         assert _check_output_files([]) is False
         assert _check_output_files_fallback([]) is False
+
+
+class TestParseExpectedFiles:
+    def test_strips_legacy_directory_annotation_suffix(self):
+        prompt = """
+출력 파일:
+- /tmp/project/docs/generated/analysis-report.md
+- /tmp/project/docs/generated/domain-extracts/ (도메인별/기능별 파일)
+- /tmp/project/docs/generated/domain-extracts/shared.md
+"""
+
+        paths = _parse_expected_files(prompt)
+
+        assert paths == [
+            Path("/tmp/project/docs/generated/analysis-report.md"),
+            Path("/tmp/project/docs/generated/domain-extracts/"),
+            Path("/tmp/project/docs/generated/domain-extracts/shared.md"),
+        ]
+
+    def test_phase1_single_prompt_yields_machine_readable_paths(self):
+        prompt = build_session_prompt(
+            "phase1_single",
+            project_dir="/tmp/project",
+            source_docs=["기획서.md"],
+            domains=["poll"],
+            features={"poll": ["vote"]},
+        )
+
+        paths = _parse_expected_files(prompt)
+
+        assert paths == [
+            Path("/tmp/project/docs/generated/analysis-report.md"),
+            Path("/tmp/project/docs/generated/domain-extracts/"),
+            Path("/tmp/project/docs/generated/domain-extracts/shared.md"),
+        ]
+
+    def test_phase1_domain_prompt_yields_machine_readable_paths(self):
+        """phase1_domain expected files must contain only the domain directory.
+
+        The Chunk 2 phase1_domain template intentionally keeps
+        ``_overview.md`` out of the machine-readable bullet list because it
+        is a conditional artefact (generated only when
+        ``overview_needed == yes``). The template also lists a
+        ``<feature>.md (feature 개수만큼)`` placeholder bullet — a human /
+        AI-facing instruction, not a real output path — which the parser
+        must skip. The only thing the runtime can assert ahead of time is
+        that the domain directory should contain *some* .md output.
+        """
+        prompt = build_session_prompt(
+            "phase1_domain",
+            project_dir="/tmp/project",
+            domain="poll-voting",
+            source_docs=["기획서.md"],
+        )
+
+        paths = _parse_expected_files(prompt)
+
+        assert paths == [
+            Path("/tmp/project/docs/generated/domain-extracts/poll-voting/"),
+        ]
+
+    def test_skips_angle_bracket_placeholder_paths(self):
+        """Bullets containing ``<placeholder>`` tokens must be skipped.
+
+        The phase1_domain template uses ``<feature>.md`` as a symbolic
+        stand-in telling the AI "one file per feature". These strings
+        must never reach ``_check_output_files`` — if they did, the
+        orchestrator would wait forever for a literal file named
+        ``<feature>.md``.
+        """
+        prompt = (
+            "출력 파일:\n"
+            "- /tmp/project/docs/generated/domain-extracts/poll/\n"
+            "- /tmp/project/docs/generated/domain-extracts/poll/<feature>.md (feature 개수만큼)\n"
+        )
+
+        paths = _parse_expected_files(prompt)
+
+        assert paths == [
+            Path("/tmp/project/docs/generated/domain-extracts/poll/"),
+        ]
 
 
 # ── Phase 1.5 completed fixture ──────────────────────────────────────
@@ -2051,3 +2231,476 @@ class TestCheckOutputFilesWithFallback:
         assert (tmp_path / "ai-agent--query-planner.md").exists()
         assert not (tmp_path / "ai-agent-nl-parser.md").exists()
         assert not (tmp_path / "ai-agent-query-planner.md").exists()
+
+
+# ── Chunk 4: _execute_orchestrator_step() ───────────────────────────
+
+
+class TestExecuteOrchestratorStep:
+    """Tests for the backend-dispatch helper used by phase functions."""
+
+    def test_claude_path_calls_open_orchestrator_session(self, tmp_path: Path) -> None:
+        """engine=claude → _open_orchestrator_session() 반드시 호출."""
+        from cowork_pilot.docs_orchestrator import (
+            _execute_orchestrator_step,
+            StepExecutionOutcome,
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="claude")
+
+        opened: list[bool] = []
+        waited: list[bool] = []
+
+        def fake_open(prompt, config, orch_config, base_path):
+            opened.append(True)
+            return tmp_path / "fake.jsonl"
+
+        def fake_wait(jsonl_path, expected_files, config, orch_config, watch_mode):
+            waited.append(True)
+            return True
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._open_orchestrator_session",
+            side_effect=fake_open,
+        ), patch(
+            "cowork_pilot.docs_orchestrator._wait_for_session_completion",
+            side_effect=fake_wait,
+        ):
+            outcome = _execute_orchestrator_step(
+                step_name="phase_1",
+                prompt="test prompt",
+                expected_files=[],
+                watch_mode=False,
+                config=Config(project_dir=str(tmp_path)),
+                orch_config=orch_config,
+                project_dir=tmp_path,
+                base_path=tmp_path,
+            )
+
+        assert len(opened) == 1, (
+            "Claude 경로에서 _open_orchestrator_session이 호출되어야 함"
+        )
+        assert len(waited) == 1, (
+            "Claude 경로에서 _wait_for_session_completion이 호출되어야 함"
+        )
+        assert outcome.kind == "completed"
+
+    def test_codex_path_does_not_call_session_opener(self, tmp_path: Path) -> None:
+        """engine=codex → session_opener와 JSONL helper가 호출되지 않아야 함."""
+        from cowork_pilot.docs_orchestrator import _execute_orchestrator_step
+        from cowork_pilot.docs_orchestrator_codex import CodexStepResult
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+
+        mock_run_codex = MagicMock(
+            return_value=CodexStepResult(
+                status="completed",
+                event_lines=[],
+                assistant_message="",
+                exit_code=0,
+                resume_handle="tid-001",
+                waiting_kind=None,
+                pending_event_id=None,
+                pending_question=None,
+                pending_approval=None,
+                error="",
+            )
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._open_orchestrator_session"
+        ) as mock_open, patch(
+            "cowork_pilot.docs_orchestrator._wait_for_session_completion"
+        ) as mock_wait, patch(
+            "cowork_pilot.docs_orchestrator.run_codex_step",
+            mock_run_codex,
+        ):
+            _execute_orchestrator_step(
+                step_name="phase_1",
+                prompt="test prompt",
+                expected_files=[],
+                watch_mode=False,
+                config=Config(project_dir=str(tmp_path)),
+                orch_config=orch_config,
+                project_dir=tmp_path,
+                base_path=tmp_path,
+            )
+
+        mock_open.assert_not_called()
+        mock_wait.assert_not_called()
+        mock_run_codex.assert_called_once()
+
+    def test_codex_waiting_writes_runtime_sidecar(self, tmp_path: Path) -> None:
+        """Codex waiting → orchestrator-runtime.json sidecar 기록."""
+        from cowork_pilot.docs_orchestrator import _execute_orchestrator_step
+        from cowork_pilot.docs_orchestrator_codex import CodexStepResult
+        from cowork_pilot.docs_orchestrator_runtime import (
+            load_runtime,
+            runtime_is_waiting,
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+
+        waiting_result = CodexStepResult(
+            status="waiting",
+            event_lines=[],
+            assistant_message="",
+            exit_code=0,
+            resume_handle="tid-002",
+            waiting_kind="input",
+            pending_event_id="q1",
+            pending_question={"question": "continue?"},
+            pending_approval=None,
+            error="",
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator.run_codex_step",
+            return_value=waiting_result,
+        ):
+            outcome = _execute_orchestrator_step(
+                step_name="phase_2:x:y",
+                prompt="prompt",
+                expected_files=[],
+                watch_mode=False,
+                config=Config(project_dir=str(tmp_path)),
+                orch_config=orch_config,
+                project_dir=tmp_path,
+                base_path=tmp_path,
+            )
+
+        assert outcome.kind == "waiting"
+        assert runtime_is_waiting(tmp_path)
+        payload = load_runtime(tmp_path)
+        assert payload is not None
+        assert payload["backend"] == "codex"
+        assert payload["step"] == "phase_2:x:y"
+        assert payload["runtime_state"] == "waiting_for_input"
+        assert payload["resume_handle"] == "tid-002"
+        assert payload["pending_event_id"] == "q1"
+
+    def test_codex_path_uses_wrapper_prompt(self, tmp_path: Path) -> None:
+        """engine=codex에서 build_codex_session_prompt()가 호출되어야 함."""
+        from cowork_pilot.docs_orchestrator import _execute_orchestrator_step
+        from cowork_pilot.docs_orchestrator_codex import CodexStepResult
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+
+        mock_result = CodexStepResult(
+            status="completed",
+            event_lines=[],
+            assistant_message="",
+            exit_code=0,
+            resume_handle="t",
+            waiting_kind=None,
+            pending_event_id=None,
+            pending_question=None,
+            pending_approval=None,
+            error="",
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator.build_codex_session_prompt"
+        ) as mock_build, patch(
+            "cowork_pilot.docs_orchestrator.run_codex_step",
+            return_value=mock_result,
+        ) as mock_run_codex:
+            mock_build.return_value = "CODEX_PROMPT"
+
+            _execute_orchestrator_step(
+                step_name="phase_1",
+                prompt="CLAUDE_PROMPT",
+                prompt_phase="phase1_single",
+                prompt_kwargs={"project_dir": "/p"},
+                expected_files=[],
+                watch_mode=False,
+                config=Config(project_dir=str(tmp_path)),
+                orch_config=orch_config,
+                project_dir=tmp_path,
+                base_path=tmp_path,
+            )
+
+        mock_build.assert_called_once_with("phase1_single", project_dir="/p")
+        # run_codex_step must receive the wrapper prompt, not the Claude prompt
+        call_kwargs = mock_run_codex.call_args.kwargs
+        assert call_kwargs["prompt"] == "CODEX_PROMPT"
+
+
+class TestRunLoopCodexPauseRecovery:
+    """Startup cleanup + waiting pause behaviour for the Codex backend."""
+
+    def _write_state(self, tmp_path: Path, current_step: str) -> Path:
+        gen_dir = tmp_path / "docs" / "generated"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        state_data = {
+            "current": {"step": current_step, "status": "running"},
+            "completed": [],
+            "pending": [],
+            "errors": [],
+            "project_summary": {
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            "updated_at": "",
+            "mode": "auto",
+            "manual_override": [],
+            "project_dir": str(tmp_path),
+        }
+        (gen_dir / "orchestrator-state.json").write_text(json.dumps(state_data))
+        return gen_dir
+
+    def test_run_loop_pauses_when_codex_waiting(self, tmp_path: Path) -> None:
+        """Codex waiting runtime → run loop exits immediately without executing phases."""
+        gen_dir = self._write_state(tmp_path, "phase_2:x:y")
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_2:x:y",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        config = Config(project_dir=str(tmp_path))
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step"
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value="phase_2",
+        ):
+            run_docs_orchestrator(config, orch_config)
+
+        # Phase execution must NOT have been called (loop paused on waiting)
+        mock_exec.assert_not_called()
+
+    def test_run_loop_clears_stale_runtime_on_startup(self, tmp_path: Path) -> None:
+        """Runtime file with a step already completed → stale, auto-cleaned at startup."""
+        from cowork_pilot.docs_orchestrator_runtime import load_runtime
+
+        gen_dir = tmp_path / "docs" / "generated"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        state_data = {
+            "current": {"step": "phase_1", "status": "completed"},
+            "completed": [
+                {
+                    "step": "phase_1",
+                    "status": "completed",
+                    "message": "ok",
+                    "completed_at": "",
+                    "marker_missing": False,
+                }
+            ],
+            "pending": [],
+            "errors": [],
+            "project_summary": {
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            "updated_at": "",
+            "mode": "auto",
+            "manual_override": [],
+            "project_dir": str(tmp_path),
+        }
+        (gen_dir / "orchestrator-state.json").write_text(json.dumps(state_data))
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_1",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        config = Config(project_dir=str(tmp_path))
+
+        # Stop the loop immediately after cleanup
+        with patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value=None,
+        ):
+            run_docs_orchestrator(config, orch_config)
+
+        # Runtime should have been cleaned up
+        assert load_runtime(tmp_path) is None
+
+
+# ── Step 5 / Chunk 4: explicit overview-context injection at render sites ─
+
+
+class TestPhase2And3PassOverviewContextExplicitly:
+    """Step 5 / Chunk 4 strict alignment.
+
+    The renderer (``orchestrator_prompts.build_session_prompt``) no longer
+    auto-injects ``extracts`` and ``overview_reasons`` via a central hook.
+    Every phase2 / phase3 render call site in ``docs_orchestrator`` must
+    therefore pass both kwargs **explicitly**, and must also include them
+    in ``prompt_kwargs`` for runtime resume.
+    """
+
+    def _fake_execute_captured(self, captured: list):
+        """Return an ``_execute_orchestrator_step`` stub that records prompt_kwargs."""
+        from cowork_pilot.docs_orchestrator import StepExecutionOutcome
+
+        def fake_execute(**kwargs):
+            captured.append(kwargs)
+            return StepExecutionOutcome(kind="completed")
+
+        return fake_execute
+
+    def _project_with_extracts(self, tmp_path: Path) -> Path:
+        generated = tmp_path / "docs" / "generated"
+        host_dir = generated / "domain-extracts" / "host"
+        host_dir.mkdir(parents=True)
+        (host_dir / "create-poll.md").write_text(
+            "\n".join(f"line {i}" for i in range(50)), encoding="utf-8"
+        )
+        (host_dir / "_overview.md").write_text(
+            "\n".join(f"line {i}" for i in range(50)), encoding="utf-8"
+        )
+        (generated / "domain-extracts" / "shared.md").write_text("shared\n", encoding="utf-8")
+        (generated / "gap-reports").mkdir(exist_ok=True)
+        (generated / "analysis-report.md").write_text(
+            "# Report\n\n"
+            "## Domain Overview Decisions\n\n"
+            "| domain | overview_needed | reason |\n"
+            "|---|---|---|\n"
+            "| host | yes | lifecycle shared |\n",
+            encoding="utf-8",
+        )
+        return generated
+
+    def test_phase_2_render_passes_extracts_and_overview_reasons_explicitly(
+        self,
+        tmp_path: Path,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+    ) -> None:
+        base_config.project_dir = str(tmp_path)
+
+        state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary={
+                "domains": ["host"],
+                "features": {"host": ["create-poll"]},
+                "source_line_count": 100,
+            },
+            completed=[
+                StepStatus(step="phase_0", status="completed"),
+                StepStatus(step="phase_1", status="completed"),
+                StepStatus(step="phase_1_5", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        generated = self._project_with_extracts(tmp_path)
+        state_path = generated / "orchestrator-state.json"
+
+        captured: list[dict] = []
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
+            side_effect=self._fake_execute_captured(captured),
+        ):
+            _run_phase_2(
+                state,
+                base_config,
+                orch_config,
+                tmp_path,
+                tmp_path / "sessions",
+                state_path,
+            )
+
+        phase2_calls = [
+            c for c in captured
+            if c.get("prompt_phase") in ("phase2_auto", "phase2_manual")
+        ]
+        assert phase2_calls, f"expected phase2 execute call, got {captured!r}"
+        pk = phase2_calls[0]["prompt_kwargs"]
+        assert "extracts" in pk, (
+            "phase2 render must pass `extracts` explicitly in prompt_kwargs "
+            "after the central auto-inject hook is removed"
+        )
+        assert "overview_reasons" in pk, (
+            "phase2 render must pass `overview_reasons` explicitly in prompt_kwargs"
+        )
+        assert pk["overview_reasons"].get("host") == "lifecycle shared"
+        # `extracts` must be an AvailableExtracts-shaped object reporting
+        # host/_overview.md as present.
+        assert pk["extracts"].overviews.get("host") is True
+        assert pk["extracts"].shared is True
+
+    def test_phase_3_architecture_render_passes_extracts_and_overview_reasons_explicitly(
+        self,
+        tmp_path: Path,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+    ) -> None:
+        from cowork_pilot.docs_orchestrator import _run_phase_3_group_c
+
+        base_config.project_dir = str(tmp_path)
+
+        state = OrchestratorState(
+            current={"phase": "phase_3", "step": "phase_3_C", "status": "idle"},
+            project_summary={
+                "domains": ["host"],
+                "features": {"host": ["create-poll"]},
+                "source_line_count": 100,
+            },
+            completed=[
+                StepStatus(step="phase_0", status="completed"),
+                StepStatus(step="phase_1", status="completed"),
+                StepStatus(step="phase_1_5", status="completed"),
+                StepStatus(step="phase_2:host:create-poll", status="completed"),
+                StepStatus(step="phase_2_summary", status="completed"),
+                StepStatus(step="phase_3_A", status="completed"),
+                StepStatus(step="phase_3_B:host", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        generated = self._project_with_extracts(tmp_path)
+        state_path = generated / "orchestrator-state.json"
+
+        captured: list[dict] = []
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
+            side_effect=self._fake_execute_captured(captured),
+        ):
+            _run_phase_3_group_c(
+                state,
+                base_config,
+                orch_config,
+                tmp_path,
+                tmp_path / "sessions",
+                state_path,
+            )
+
+        arch_calls = [
+            c for c in captured
+            if c.get("prompt_phase") == "phase3_architecture"
+        ]
+        assert arch_calls, f"expected phase3_architecture execute call, got {captured!r}"
+        pk = arch_calls[0]["prompt_kwargs"]
+        assert "extracts" in pk, (
+            "phase3_architecture render must pass `extracts` explicitly in prompt_kwargs"
+        )
+        assert "overview_reasons" in pk, (
+            "phase3_architecture render must pass `overview_reasons` explicitly in prompt_kwargs"
+        )
+        assert pk["overview_reasons"].get("host") == "lifecycle shared"
+        assert pk["extracts"].overviews.get("host") is True
+
+    def test_inject_overview_context_hook_is_removed(self) -> None:
+        """The central auto-inject hook must no longer exist on orchestrator_prompts."""
+        from cowork_pilot import orchestrator_prompts
+
+        assert not hasattr(orchestrator_prompts, "_inject_overview_context"), (
+            "_inject_overview_context must be removed as part of the single-source "
+            "refactor; call sites now pass extracts/overview_reasons explicitly"
+        )
