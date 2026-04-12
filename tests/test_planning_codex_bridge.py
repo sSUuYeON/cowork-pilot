@@ -29,6 +29,15 @@ def test_extract_thread_id_reads_thread_started_event() -> None:
     assert extract_thread_id(lines) == "thread-123"
 
 
+def test_extract_thread_id_falls_back_to_session_meta_id() -> None:
+    lines = [
+        '{"type":"session_meta","payload":{"id":"session-123"}}',
+        '{"type":"turn.completed"}',
+    ]
+
+    assert extract_thread_id(lines) == "session-123"
+
+
 def test_extract_terminal_assistant_message_returns_last_completed_message() -> None:
     lines = [
         '{"type":"item.completed","item":{"type":"agent_message","text":"first"}}',
@@ -116,6 +125,8 @@ def test_build_exec_resume_command_uses_exec_resume_json_shape() -> None:
         "codex",
         "exec",
         "resume",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
         "--json",
         "thread-123",
         "continue the work",
@@ -212,6 +223,8 @@ def test_run_exec_resume_returns_exec_stage_result_and_accepts_run_dir() -> None
         "codex",
         "exec",
         "resume",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
         "--json",
         "thread-123",
         "continue the work",

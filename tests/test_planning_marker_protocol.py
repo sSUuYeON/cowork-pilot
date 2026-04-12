@@ -439,6 +439,38 @@ blocking: true
     ]
 
 
+def test_parser_accepts_repeated_input_required_waiting_bundle():
+    message = """
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: gap_analysis
+event_id: gap-q1
+reason: need product choice
+question: 첫 번째 질문
+options:
+  - a
+recommended: a
+blocking: true
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: gap_analysis
+event_id: gap-q2
+reason: need follow-up
+question: 두 번째 질문
+options:
+  - b
+recommended: b
+blocking: true
+</COWORK_PILOT_EVENT>
+"""
+
+    bundle = extract_terminal_marker_bundle(message)
+
+    assert [item.type for item in bundle] == ["INPUT_REQUIRED", "INPUT_REQUIRED"]
+    assert [item.event_id for item in bundle] == ["gap-q1", "gap-q2"]
+
+
 def test_parser_accepts_allowed_bundle_assumption_then_needs_human():
     message = """
 <COWORK_PILOT_EVENT>

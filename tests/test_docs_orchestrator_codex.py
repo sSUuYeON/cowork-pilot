@@ -69,6 +69,10 @@ def _thread_id_line(thread_id: str = "tid-001") -> str:
     return json.dumps({"type": "thread.started", "thread_id": thread_id})
 
 
+def _session_meta_line(session_id: str = "sess-001") -> str:
+    return json.dumps({"type": "session_meta", "payload": {"id": session_id}})
+
+
 def _fixture(name: str) -> str:
     return (_FIXTURE_DIR / name).read_text(encoding="utf-8")
 
@@ -201,6 +205,78 @@ def test_run_codex_step_waiting_on_input_required(tmp_path):
     assert result.waiting_kind == "input"
     assert result.pending_event_id == "phase_2_pay_refund_q1"
     assert result.resume_handle == "tid-xyz"
+
+
+def test_run_codex_step_waiting_on_multiple_input_required_uses_first_blocker(tmp_path):
+    assistant_message = (
+        "<COWORK_PILOT_EVENT>\n"
+        "type: INPUT_REQUIRED\n"
+        "stage: phase_2:pay:refund\n"
+        "event_id: phase_2_pay_refund_q1\n"
+        "reason: need first answer\n"
+        "question: First question?\n"
+        "options:\n"
+        "  - admin\n"
+        "recommended: admin\n"
+        "blocking: true\n"
+        "</COWORK_PILOT_EVENT>\n"
+        "<COWORK_PILOT_EVENT>\n"
+        "type: INPUT_REQUIRED\n"
+        "stage: phase_2:pay:refund\n"
+        "event_id: phase_2_pay_refund_q2\n"
+        "reason: need second answer\n"
+        "question: Second question?\n"
+        "options:\n"
+        "  - auto\n"
+        "recommended: auto\n"
+        "blocking: true\n"
+        "</COWORK_PILOT_EVENT>"
+    )
+    runner = _make_runner(
+        event_lines=[_thread_id_line("tid-multi-q")],
+        assistant_message=assistant_message,
+        exit_code=0,
+    )
+
+    result = run_codex_step(
+        project_dir=tmp_path,
+        step="phase_2:pay:refund",
+        prompt="do the thing",
+        expected_files=[],
+        codex_command="codex",
+        codex_extra_args=None,
+        command_runner=runner,
+    )
+
+    assert result.status == "waiting"
+    assert result.pending_event_id == "phase_2_pay_refund_q1"
+    assert result.pending_question == {
+        "question": "First question?",
+        "options": ["admin"],
+        "recommended": "admin",
+        "blocking": True,
+    }
+
+
+def test_run_codex_step_waiting_uses_session_meta_id_as_resume_handle(tmp_path):
+    runner = _make_runner(
+        event_lines=[_session_meta_line("sess-fallback-001")],
+        assistant_message=_INPUT_REQUIRED_MARKER,
+        exit_code=0,
+    )
+
+    result = run_codex_step(
+        project_dir=tmp_path,
+        step="phase_2:pay:refund",
+        prompt="do the thing",
+        expected_files=[],
+        codex_command="codex",
+        codex_extra_args=None,
+        command_runner=runner,
+    )
+
+    assert result.status == "waiting"
+    assert result.resume_handle == "sess-fallback-001"
 
 
 # ── run_codex_step: failed paths ─────────────────────────────────────

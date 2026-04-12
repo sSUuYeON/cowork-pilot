@@ -312,7 +312,7 @@ def _build_stage_result(
     pending_approval: PendingApproval | None = None
     if update_state is PlanningRuntimeState.WAITING_FOR_INPUT:
         blocking_q = next(
-            (m for m in reversed(markers) if m.type == "INPUT_REQUIRED" and bool(m.payload["blocking"])),
+            (m for m in markers if m.type == "INPUT_REQUIRED" and bool(m.payload["blocking"])),
             None,
         )
         if blocking_q is not None:
@@ -325,7 +325,7 @@ def _build_stage_result(
             )
     elif update_state is PlanningRuntimeState.WAITING_FOR_APPROVAL:
         blocking_a = next(
-            (m for m in reversed(markers) if m.type == "APPROVAL_REQUIRED" and bool(m.payload["blocking"])),
+            (m for m in markers if m.type == "APPROVAL_REQUIRED" and bool(m.payload["blocking"])),
             None,
         )
         if blocking_a is not None:

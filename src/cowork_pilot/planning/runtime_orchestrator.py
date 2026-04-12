@@ -60,6 +60,7 @@ def apply_marker_bundle_to_run(
 ) -> RuntimeUpdate:
     state = current_state
     last_metadata: dict[str, object] | None = None
+    pending_metadata: dict[str, object] | None = None
 
     for marker in extract_terminal_marker_bundle(message):
         append_runtime_event(
@@ -73,10 +74,11 @@ def apply_marker_bundle_to_run(
                 "payload": marker.payload,
             },
         )
-        last_metadata = {
+        current_metadata = {
             "event_id": marker.event_id,
             "stage": marker.stage,
         }
+        last_metadata = current_metadata
 
         if marker.type == "INPUT_REQUIRED":
             blocking = bool(marker.payload["blocking"])
@@ -88,14 +90,18 @@ def apply_marker_bundle_to_run(
             )
             if blocking and state is PlanningRuntimeState.RUNNING_EXEC:
                 state = PlanningRuntimeState.WAITING_FOR_INPUT
-                last_metadata["pending_event_id"] = marker.event_id
-                last_metadata["pending_question"] = {
-                    "event_id": marker.event_id,
-                    "question": str(marker.payload["question"]),
-                    "options": [str(x) for x in marker.payload.get("options", [])],
-                    "recommended": str(marker.payload.get("recommended", "")),
-                    "blocking": True,
+                pending_metadata = {
+                    **current_metadata,
+                    "pending_event_id": marker.event_id,
+                    "pending_question": {
+                        "event_id": marker.event_id,
+                        "question": str(marker.payload["question"]),
+                        "options": [str(x) for x in marker.payload.get("options", [])],
+                        "recommended": str(marker.payload.get("recommended", "")),
+                        "blocking": True,
+                    },
                 }
+                last_metadata = pending_metadata
 
         elif marker.type == "APPROVAL_REQUIRED":
             blocking = bool(marker.payload["blocking"])
@@ -107,12 +113,16 @@ def apply_marker_bundle_to_run(
             )
             if blocking and state is PlanningRuntimeState.RUNNING_EXEC:
                 state = PlanningRuntimeState.WAITING_FOR_APPROVAL
-                last_metadata["pending_event_id"] = marker.event_id
-                last_metadata["pending_approval"] = {
-                    "event_id": marker.event_id,
-                    "subject": str(marker.payload["subject"]),
-                    "blocking": True,
+                pending_metadata = {
+                    **current_metadata,
+                    "pending_event_id": marker.event_id,
+                    "pending_approval": {
+                        "event_id": marker.event_id,
+                        "subject": str(marker.payload["subject"]),
+                        "blocking": True,
+                    },
                 }
+                last_metadata = pending_metadata
 
         elif marker.type == "ASSUMPTION_LOG":
             append_assumption(
@@ -138,8 +148,9 @@ def apply_marker_bundle_to_run(
             last_metadata["summary"] = marker.payload["summary"]
             last_metadata["outputs"] = marker.payload["outputs"]
 
-    if last_metadata is not None:
-        write_run_state(run_dir, state=state.value, metadata=last_metadata)
+    metadata_to_write = pending_metadata if pending_metadata is not None else last_metadata
+    if metadata_to_write is not None:
+        write_run_state(run_dir, state=state.value, metadata=metadata_to_write)
 
     return RuntimeUpdate(state=state)
 

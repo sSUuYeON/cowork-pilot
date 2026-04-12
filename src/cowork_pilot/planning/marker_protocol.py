@@ -10,6 +10,12 @@ _ASSUMPTION_ENUM_VALUES = {"low", "medium", "high"}
 _HUMAN_LOOP_MARKER_TYPES = {"INPUT_REQUIRED", "APPROVAL_REQUIRED", "NEEDS_HUMAN"}
 _REPEATABLE_BUNDLE_PREFIX_MARKER_TYPES = {"ASSUMPTION_LOG"}
 _BUNDLE_TERMINAL_MARKER_TYPES = {"STAGE_COMPLETE", "APPROVAL_REQUIRED", "NEEDS_HUMAN"}
+_WAITING_BUNDLE_ALLOWED_MARKER_TYPES = {
+    "ASSUMPTION_LOG",
+    "INPUT_REQUIRED",
+    "APPROVAL_REQUIRED",
+    "NEEDS_HUMAN",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +164,17 @@ def _validate_bundle_combination(types: tuple[str, ...]) -> bool:
         return False
     if len(types) == 1:
         return True
+
+    # Waiting bundles are allowed to end in one or more human-loop markers.
+    # This keeps the runtime tolerant when the model emits multiple blocking
+    # questions even though the preferred contract is "one blocker per turn".
+    if "STAGE_COMPLETE" not in types and any(
+        marker_type in _HUMAN_LOOP_MARKER_TYPES for marker_type in types
+    ):
+        return all(
+            marker_type in _WAITING_BUNDLE_ALLOWED_MARKER_TYPES
+            for marker_type in types
+        )
 
     terminal_type = types[-1]
     if terminal_type not in _BUNDLE_TERMINAL_MARKER_TYPES:

@@ -133,6 +133,46 @@ blocking: true
     ]
 
 
+def test_blocking_input_required_bundle_keeps_first_pending_question(tmp_path: Path):
+    message = _message(
+        """
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-1
+reason: first blocker
+question: 첫 번째 질문은 무엇인가?
+options:
+  - alpha
+recommended: alpha
+blocking: true
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-2
+reason: second blocker
+question: 두 번째 질문은 무엇인가?
+options:
+  - beta
+recommended: beta
+blocking: true
+</COWORK_PILOT_EVENT>
+""".strip()
+    )
+
+    update = apply_marker_bundle_to_run(
+        run_dir=tmp_path,
+        current_state=PlanningRuntimeState.RUNNING_EXEC,
+        message=message,
+    )
+
+    assert update == RuntimeUpdate(state=PlanningRuntimeState.WAITING_FOR_INPUT)
+    state = read_run_state(tmp_path)
+    assert state["pending_event_id"] == "pcr-1"
+    assert state["pending_question"]["question"] == "첫 번째 질문은 무엇인가?"
+
+
 def test_nonblocking_input_required_keeps_run_running_exec(tmp_path: Path):
     message = _message(
         """

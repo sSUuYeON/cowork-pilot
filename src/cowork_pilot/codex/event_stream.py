@@ -181,19 +181,35 @@ def _parse_event_line(line: str) -> dict | None:
 
 
 def extract_thread_id(lines: list[str]) -> str:
-    """Return the first thread id observed in a Codex JSONL event stream."""
+    """Return the best available non-interactive resume handle.
+
+    Prefer ``thread.started.thread_id`` when present. Some newer Codex exec
+    rollouts omit that event and only expose ``session_meta.payload.id`` at the
+    top of the NDJSON stream; fall back to that value so callers can still
+    resume the same exec session.
+    """
+    session_meta_id = ""
+
     for line in lines:
         payload = _parse_event_line(line)
         if payload is None:
             continue
-        if payload.get("type") != "thread.started":
+        if payload.get("type") == "thread.started":
+            thread_id = payload.get("thread_id")
+            if isinstance(thread_id, str) and thread_id:
+                return thread_id
+            continue
+        if payload.get("type") != "session_meta":
             continue
 
-        thread_id = payload.get("thread_id")
-        if isinstance(thread_id, str):
-            return thread_id
+        meta_payload = payload.get("payload")
+        if not isinstance(meta_payload, dict):
+            continue
+        meta_id = meta_payload.get("id")
+        if isinstance(meta_id, str) and meta_id and not session_meta_id:
+            session_meta_id = meta_id
 
-    return ""
+    return session_meta_id
 
 
 def extract_terminal_assistant_message(lines: list[str]) -> str:

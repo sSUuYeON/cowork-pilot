@@ -19,6 +19,12 @@ This session has no interactive tool access. Instead, use marker bundles:
 
 **If the base prompt above says "AskUserQuestion" or asks you to confirm with the user or request approval, do NOT call any tool. Instead emit the appropriate marker bundle (`INPUT_REQUIRED` or `APPROVAL_REQUIRED`) at the end of your message.**
 
+When user input is required:
+- emit exactly one blocking `INPUT_REQUIRED` or `APPROVAL_REQUIRED` marker in a single assistant message
+- do not emit a second blocking question in the same assistant message
+- after the user answers, resume the same step and ask the next unresolved blocker only if it is still needed
+- do not emit `STAGE_COMPLETE` while any required user answer is still pending
+
 ### Marker bundle format
 
 Each marker is a flat `key: value` block wrapped in `<COWORK_PILOT_EVENT>` tags.

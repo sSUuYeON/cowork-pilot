@@ -109,6 +109,54 @@ outputs:
     assert "Answer recorded for pcr-1: dashboard" in captured_prompt["prompt"]
 
 
+def test_execute_stage_subsession_prefers_first_blocking_question_when_multiple_are_emitted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "cowork_pilot.planning.stage_executor.run_exec_stage",
+        lambda **kwargs: ExecStageResult(
+            event_lines=['{"type":"thread.started","thread_id":"thread-123"}'],
+            assistant_message="""
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-1
+reason: first blocker
+question: 첫 번째 질문
+options:
+  - alpha
+recommended: alpha
+blocking: true
+</COWORK_PILOT_EVENT>
+<COWORK_PILOT_EVENT>
+type: INPUT_REQUIRED
+stage: product_completeness_review
+event_id: pcr-2
+reason: second blocker
+question: 두 번째 질문
+options:
+  - beta
+recommended: beta
+blocking: true
+</COWORK_PILOT_EVENT>
+""".strip(),
+            exit_code=0,
+        ),
+    )
+
+    result = execute_stage_subsession(
+        run_dir=tmp_path,
+        stage=PlanningStage.PRODUCT_COMPLETENESS_REVIEW,
+        prompt="continue",
+    )
+
+    assert result.runtime_state == PlanningRuntimeState.WAITING_FOR_INPUT.value
+    assert result.pending_question is not None
+    assert result.pending_question.event_id == "pcr-1"
+    assert result.pending_question.question == "첫 번째 질문"
+
+
 def test_render_stage_prompt_supports_explicit_read_sets_and_handoff_summary(
     tmp_path: Path,
 ):

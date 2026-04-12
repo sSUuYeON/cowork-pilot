@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 
+def _exec_policy_args() -> list[str]:
+    """Return the sandbox/approval flags required for non-interactive exec flows."""
+    return [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+    ]
+
+
 def build_exec_command(
     prompt: str,
     project_dir: str,
@@ -12,8 +20,7 @@ def build_exec_command(
     cmd = [
         codex_command,
         "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--skip-git-repo-check",
+        *_exec_policy_args(),
         "-C",
         project_dir,
     ]
@@ -56,6 +63,7 @@ def build_exec_resume_command(
         codex_command,
         "exec",
         "resume",
+        *_exec_policy_args(),
         "--json",
         resume_handle,
         prompt,
