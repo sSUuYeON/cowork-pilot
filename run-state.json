@@ -1,10 +1,10 @@
 {
   "state": "failed",
-  "exit_code": 127,
+  "exit_code": 1,
   "stage": "classification",
   "planning_context": {
-    "run_dir": "/sessions/laughing-tender-babbage/mnt/cowork-pilot",
-    "project_dir": "/sessions/laughing-tender-babbage/mnt/cowork-pilot",
+    "run_dir": "/Users/yeonsu/autoagent/cowork-pilot",
+    "project_dir": "/Users/yeonsu/autoagent/cowork-pilot",
     "target_version": "",
     "mode": "",
     "explicit_mode": false,

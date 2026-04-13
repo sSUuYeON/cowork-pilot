@@ -7,6 +7,21 @@ from pathlib import Path
 from typing import Literal
 
 
+ResolverReason = Literal[
+    "conflict",
+    "consistency_gap",
+    "insufficient_evidence",
+    "policy_uncertain",
+]
+
+AppliedPolicy = Literal[
+    "existing_contract_first",
+    "conservative_scope",
+    "recommended_plus_consistency",
+    "irreversible_guard",
+]
+
+
 @dataclass(frozen=True)
 class Phase2StepInputs:
     """All inputs and owned outputs for one phase2 step."""
@@ -38,6 +53,7 @@ class PendingQuestionPacket:
     seed_optional_inputs: list[Path]
     seed_output_files: list[Path]
     question_fingerprint: str
+    escalation_context: dict[str, object] | None = None
 
     @staticmethod
     def compute_fingerprint(
@@ -70,6 +86,9 @@ class UpperAgentAnswer:
     selected_option: str | None
     confidence: Literal["low", "medium", "high"]
     rationale: str
+    resolver_reason: ResolverReason | None = None
+    applied_policy: AppliedPolicy | None = None
+    ai_decision_note: str | None = None
 
 
 @dataclass

@@ -224,6 +224,9 @@ class TestDocsOrchestratorConfig:
         assert oc.auto_answer.enabled is False
         assert oc.auto_answer.engine == "codex"
         assert oc.auto_answer.max_rounds_per_run == 100
+        assert oc.auto_answer.escalate_mode == "auto"
+        assert oc.auto_answer.conflict_resolver_enabled is True
+        assert oc.auto_answer.max_conflict_resolver_attempts == 1
 
     def test_load_from_toml(self, tmp_path):
         toml_file = tmp_path / "config.toml"
@@ -247,6 +250,9 @@ class TestDocsOrchestratorConfig:
             'timeout_seconds = 45.0\n'
             'max_attempts_per_event = 4\n'
             'max_rounds_per_run = 300\n'
+            'escalate_mode = "never_human"\n'
+            'conflict_resolver_enabled = false\n'
+            'max_conflict_resolver_attempts = 2\n'
         )
         oc = load_docs_orchestrator_config(toml_file)
         assert oc.idle_timeout_seconds == 180.0
@@ -265,6 +271,9 @@ class TestDocsOrchestratorConfig:
         assert oc.auto_answer.timeout_seconds == 45.0
         assert oc.auto_answer.max_attempts_per_event == 4
         assert oc.auto_answer.max_rounds_per_run == 300
+        assert oc.auto_answer.escalate_mode == "never_human"
+        assert oc.auto_answer.conflict_resolver_enabled is False
+        assert oc.auto_answer.max_conflict_resolver_attempts == 2
 
     def test_load_missing_file(self, tmp_path):
         oc = load_docs_orchestrator_config(tmp_path / "nonexistent.toml")

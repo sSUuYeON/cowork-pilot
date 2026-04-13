@@ -26,6 +26,7 @@ from cowork_pilot.config import Config, DocsOrchestratorConfig
 from cowork_pilot.docs_orchestrator_codex import CodexStepResult
 from cowork_pilot.docs_orchestrator_resume import (
     DocsResumeOutcome,
+    _docs_resume_expected_files,
     resume_waiting_docs_step,
 )
 
@@ -120,6 +121,20 @@ def _make_configs(project_dir: Path) -> tuple[Config, DocsOrchestratorConfig]:
     config = Config(project_dir=str(project_dir), engine="codex")
     orch_config = DocsOrchestratorConfig(engine="codex")
     return config, orch_config
+
+
+def test_docs_resume_expected_files_for_phase2_conflict(tmp_path: Path) -> None:
+    expected = _docs_resume_expected_files(
+        "phase_2_conflict:host--edit-poll--edit_window",
+        tmp_path,
+    )
+    assert expected == [
+        tmp_path
+        / "docs"
+        / "generated"
+        / "contradiction-resolutions"
+        / "host--edit-poll--edit_window.md"
+    ]
 
 
 # ── completed ────────────────────────────────────────────────────────
@@ -223,6 +238,38 @@ def test_resume_waiting_docs_step_waiting_writes_new_runtime_and_leaves_state(
     assert persisted_runtime["resume_handle"] == "tid-002"
     assert persisted_runtime["pending_question"]["question"] == "Next?"
     assert persisted_runtime["pending_event_id"] == "q2"
+
+
+def test_resume_waiting_docs_step_passes_ai_decision_envelope_verbatim(
+    tmp_path: Path,
+) -> None:
+    _seed_state_file(tmp_path)
+    _seed_runtime_file(tmp_path)
+    config, orch_config = _make_configs(tmp_path)
+    ai_decision_text = (
+        "[AI_DECISION]\n"
+        "selected_option: A. Keep v1 minimal\n"
+        "resolver_reason: insufficient_evidence\n"
+        "applied_policy: recommended_plus_consistency\n"
+        "note: recommended option과 기존 패턴이 가장 일관적입니다.\n"
+        "[/AI_DECISION]\n\n"
+        "최종 확정 답변:\n"
+        "A. Keep v1 minimal"
+    )
+
+    with patch(
+        "cowork_pilot.docs_orchestrator_resume.resume_codex_step",
+        return_value=_make_codex_result("completed"),
+    ) as mock_resume:
+        outcome = resume_waiting_docs_step(
+            config,
+            orch_config,
+            response_text=ai_decision_text,
+            response_kind="answer",
+        )
+
+    assert outcome.status == "completed"
+    assert mock_resume.call_args.kwargs["response_text"] == ai_decision_text
 
 
 def test_resume_waiting_docs_step_waiting_approval_writes_waiting_for_approval(

@@ -55,6 +55,7 @@ from cowork_pilot.docs_orchestrator_runtime import (
     runtime_is_waiting,
     write_runtime,
 )
+from cowork_pilot.source_contradictions import contradiction_resolution_path
 
 
 @dataclass
@@ -118,6 +119,14 @@ def _docs_resume_expected_files(step: str, project_dir: Path) -> list[Path]:
         if files:
             return files
         return []
+    if step.startswith("phase_2_conflict:"):
+        contradiction_id = step[len("phase_2_conflict:"):]
+        return [
+            contradiction_resolution_path(
+                generated,
+                contradiction_id,
+            )
+        ]
     if step == "phase_3_A":
         design_docs = project_dir / "docs" / "design-docs"
         return [

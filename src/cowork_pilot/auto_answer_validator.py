@@ -5,6 +5,20 @@ from dataclasses import dataclass
 
 from cowork_pilot.auto_answer_models import PendingQuestionPacket, UpperAgentAnswer
 
+_VALID_RESOLVER_REASONS = {
+    "conflict",
+    "consistency_gap",
+    "insufficient_evidence",
+    "policy_uncertain",
+}
+
+_VALID_APPLIED_POLICIES = {
+    "existing_contract_first",
+    "conservative_scope",
+    "recommended_plus_consistency",
+    "irreversible_guard",
+}
+
 
 @dataclass
 class ValidationResult:
@@ -82,6 +96,29 @@ def validate_upper_answer(
     if confidence not in ("low", "medium", "high"):
         confidence = "medium"
 
+    resolver_reason, reason_error = _parse_optional_enum(
+        data,
+        "resolver_reason",
+        _VALID_RESOLVER_REASONS,
+    )
+    if reason_error:
+        return ValidationResult(ok=False, error=reason_error)
+
+    applied_policy, policy_error = _parse_optional_enum(
+        data,
+        "applied_policy",
+        _VALID_APPLIED_POLICIES,
+    )
+    if policy_error:
+        return ValidationResult(ok=False, error=policy_error)
+
+    note_raw = data.get("ai_decision_note")
+    ai_decision_note = (
+        str(note_raw).strip()
+        if note_raw is not None and str(note_raw).strip()
+        else None
+    )
+
     answer = UpperAgentAnswer(
         event_id=str(data["event_id"]),
         question_fingerprint=str(data["question_fingerprint"]),
@@ -90,8 +127,28 @@ def validate_upper_answer(
         selected_option=resolved_option,
         confidence=confidence,
         rationale=str(data.get("rationale", "")),
+        resolver_reason=resolver_reason,
+        applied_policy=applied_policy,
+        ai_decision_note=ai_decision_note,
     )
     return ValidationResult(ok=True, answer=answer)
+
+
+def _parse_optional_enum(
+    data: dict[str, object],
+    key: str,
+    allowed: set[str],
+) -> tuple[str | None, str]:
+    raw_value = data.get(key)
+    if raw_value is None:
+        return None, ""
+
+    value = str(raw_value).strip()
+    if not value:
+        return None, ""
+    if value not in allowed:
+        return None, f"잘못된 {key}: {value}"
+    return value, ""
 
 
 def _extract_option_prefixes(options: list[str]) -> set[str]:

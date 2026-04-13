@@ -1,0 +1,60 @@
+{# Phase 2: manual 모드 source contradiction 해소 #}
+프로젝트 경로: {{ project_dir }}
+대상 충돌: {{ contradiction.domain }}/{{ contradiction.feature }} ({{ contradiction.facet }})
+
+모드: manual
+
+읽어야 할 파일:
+- {{ project_dir }}/docs/generated/references/checklists.md
+- {{ project_dir }}/docs/generated/analysis-report.md
+- {{ project_dir }}/docs/generated/domain-extracts/shared.md
+- {{ project_dir }}/docs/generated/domain-extracts/{{ contradiction.domain }}/{{ contradiction.feature }}.md
+- {{ project_dir }}/docs/generated/contradictions/{{ contradiction.contradiction_id }}.json
+{% if extracts is defined and extracts and extracts.overviews.get(contradiction.domain) %}
+- {{ project_dir }}/docs/generated/domain-extracts/{{ contradiction.domain }}/_overview.md
+{% endif %}
+
+다음을 수행하라:
+1. 위 파일들을 읽고 source contradiction의 충돌 claim을 정확히 요약한다
+2. 아래 resolution question을 기준으로, 일반 gap 질문보다 먼저 이 충돌을 해소한다
+3. 아직 결정이 필요하면 AskUserQuestion으로 아래 옵션만 사용해 한 번에 1개 질문만 한다
+   - recommended 옵션이 있으면 그대로 표시한다
+   - 사용자가 답하면 같은 step을 이어서 완료한다
+   - 재개 응답이 `[AI_DECISION] ... [/AI_DECISION]` 블록이면, 그것을 자동 확정된 해소 결정으로 간주한다
+   - 이 경우 블록의 `selected_option`을 실제 확정 해석으로 채택하고 같은 충돌 질문을 다시 묻지 마라
+   - `resolver_reason`, `applied_policy`, `note`를 contradiction-resolution 문서에 `[AI_DECISION]` 기록으로 남겨라
+4. 결과를 contradiction-resolution 문서에 기록한다
+   - Conflicting Claims
+   - Resolution Question
+   - Chosen Interpretation
+   - Downstream Contract
+   - 자동 확정된 결정이면 `[AI_DECISION]` 태그와 note를 함께 적어라
+5. 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록한다
+
+Resolution Question:
+{{ contradiction.question }}
+
+선택지:
+{% for option in contradiction.options %}
+- {{ option }}{% if contradiction.recommended == option %} (recommended){% endif %}
+{% endfor %}
+
+출력 파일:
+- {{ project_dir }}/docs/generated/contradiction-resolutions/{{ contradiction.contradiction_id }}.md
+
+품질 규칙:
+- conflicting claim의 source file / section / excerpt를 빠짐없이 적어라
+- chosen interpretation은 이후 gap-analysis에서 재사용 가능한 계약 형태로 적어라
+- downstream contract는 허용 상태/필드/권한/후속 규칙을 구체적으로 적어라
+
+완료 시 출력 파일 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.
+{% if overview_reasons %}
+
+### Domain Overview Decisions (컨텍스트)
+
+{% for d, reason in overview_reasons.items() %}
+- **{{ d }}**: {{ "overview 있음" if extracts is defined and extracts and extracts.overviews.get(d) else "overview 없음" }} — {{ reason }}
+{% endfor %}
+
+이 목록은 참고용 컨텍스트다. 파일이 실제로 존재하는지 여부만 읽기 판단에 사용한다.
+{% endif %}

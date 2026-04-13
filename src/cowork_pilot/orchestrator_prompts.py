@@ -24,6 +24,8 @@ _PHASE_TEMPLATE_MAP: dict[str, str] = {
     "phase1_domain": "phase1_domain.j2",
     "phase2_auto": "phase2_auto.j2",
     "phase2_manual": "phase2_manual.j2",
+    "phase2_conflict_auto": "phase2_conflict_auto.j2",
+    "phase2_conflict_manual": "phase2_conflict_manual.j2",
     "phase3_design_docs": "phase3_design_docs.j2",
     "phase3_product_spec": "phase3_product_spec.j2",
     "phase3_architecture": "phase3_architecture.j2",

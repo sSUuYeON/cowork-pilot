@@ -102,3 +102,53 @@ def test_resolve_phase2_step_inputs_bundle_multiple_features(tmp_path: Path) -> 
     assert (
         tmp_path / "docs" / "generated" / "domain-extracts" / "entry" / "share-link-qr.md"
     ) in inputs.required_inputs
+
+
+def test_resolve_phase2_step_inputs_includes_prior_ai_decision_reports(
+    tmp_path: Path,
+) -> None:
+    generated = _seed_phase2_project(tmp_path)
+    prior_report = generated / "gap-reports" / "entry--share-link-qr.md"
+    prior_report.write_text(
+        "# prior\n[AI_DECISION] keep existing contract\n<!-- ORCHESTRATOR:DONE -->\n",
+        encoding="utf-8",
+    )
+
+    extracts = compute_available_extracts(
+        tmp_path / "docs" / "generated" / "domain-extracts",
+    )
+    inputs = resolve_phase2_step_inputs(
+        project_dir=tmp_path,
+        step_name="phase_2:entry:join-code",
+        phase_template="phase2_manual",
+        bundle=[("entry", "join-code")],
+        extracts=extracts,
+        overview_reasons={},
+    )
+
+    assert prior_report in inputs.optional_inputs
+
+
+def test_resolve_phase2_step_inputs_includes_completed_same_domain_gap_reports(
+    tmp_path: Path,
+) -> None:
+    generated = _seed_phase2_project(tmp_path)
+    completed_report = generated / "gap-reports" / "entry--share-link-qr.md"
+    completed_report.write_text(
+        "# completed\nsummary\n<!-- ORCHESTRATOR:DONE -->\n",
+        encoding="utf-8",
+    )
+
+    extracts = compute_available_extracts(
+        tmp_path / "docs" / "generated" / "domain-extracts",
+    )
+    inputs = resolve_phase2_step_inputs(
+        project_dir=tmp_path,
+        step_name="phase_2:entry:join-code",
+        phase_template="phase2_manual",
+        bundle=[("entry", "join-code")],
+        extracts=extracts,
+        overview_reasons={},
+    )
+
+    assert completed_report in inputs.optional_inputs

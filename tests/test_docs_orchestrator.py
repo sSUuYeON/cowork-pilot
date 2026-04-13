@@ -40,6 +40,10 @@ from cowork_pilot.docs_orchestrator import (
     check_bundle_quality_degradation,
     run_docs_orchestrator,
 )
+from cowork_pilot.docs_orchestrator_terminal_ui import (
+    TerminalResponse,
+    prompt_from_runtime_payload,
+)
 from cowork_pilot.orchestrator_prompts import build_session_prompt
 from cowork_pilot.orchestrator_state import (
     OrchestratorState,
@@ -483,6 +487,61 @@ class TestPhaseTransitionIntegration:
         completed_steps = {s.step for s in result.completed}
         assert "phase_1_5" in completed_steps
         assert len(result.errors) == 0
+
+    def test_phase_1_5_pass_writes_contradiction_artifacts(
+        self,
+        phase1_completed_state: OrchestratorState,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+        tmp_path: Path,
+    ) -> None:
+        base_config.project_dir = str(tmp_path)
+        generated = tmp_path / "docs" / "generated"
+        host_dir = generated / "domain-extracts" / "host"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        (generated / "domain-extracts" / "shared.md").write_text(
+            "\n".join(
+                [
+                    "<!-- SOURCE: shared.md#6.2 기능 목록 -->",
+                    "- 잠금 전까지 질문/보기 텍스트 편집",
+                    "<!-- SOURCE: shared.md#8.6 인터랙션 -->",
+                    "- draft는 생성 직후 1회 편집 허용",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (host_dir / "edit-poll.md").write_text(
+            "<!-- SOURCE: edit-poll.md#9.4 보안 규칙 -->\n"
+            "- onlyAllowedFieldsChanged(['status', 'closedAt'])\n",
+            encoding="utf-8",
+        )
+        state_path = generated / "orchestrator-state.json"
+
+        gate_result = GateResult(
+            passed=True,
+            coverage_ratio=0.95,
+            uncovered_sections=[],
+            missing_features=[],
+        )
+        new_ok = Phase1Result(ok=True, hard_failures=[], warnings=[])
+
+        with patch(
+            "cowork_pilot.docs_orchestrator.check_phase1_quality",
+            return_value=gate_result,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.evaluate_phase1",
+            return_value=new_ok,
+        ):
+            _run_phase_1_5(
+                phase1_completed_state,
+                base_config,
+                orch_config,
+                tmp_path,
+                state_path,
+            )
+
+        assert (generated / "contradictions" / "index.json").exists()
+        assert (generated / "contradictions" / "host--edit-poll--edit_window.json").exists()
 
     @patch("cowork_pilot.docs_orchestrator._notify_escalate")
     def test_phase_1_5_fail_coverage_escalates(
@@ -1182,6 +1241,90 @@ class TestDetermineNextStepPhase2And3:
 
 
 class TestPhase2Integration:
+    def test_phase_2_runs_conflict_steps_before_gap_bundles(
+        self,
+        tmp_path: Path,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+    ) -> None:
+        from cowork_pilot.docs_orchestrator import StepExecutionOutcome
+        from cowork_pilot.orchestrator_state import OrchestratorState, StepStatus
+
+        base_config.project_dir = str(tmp_path)
+        state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary={
+                "domains": ["host"],
+                "features": {"host": ["edit-poll"]},
+                "source_line_count": 100,
+            },
+            completed=[
+                StepStatus(step="phase_0", status="completed"),
+                StepStatus(step="phase_1", status="completed"),
+                StepStatus(step="phase_1_5", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        generated = tmp_path / "docs" / "generated"
+        (generated / "references").mkdir(parents=True, exist_ok=True)
+        (generated / "gap-reports").mkdir(parents=True, exist_ok=True)
+        (generated / "contradictions").mkdir(parents=True, exist_ok=True)
+        host_dir = generated / "domain-extracts" / "host"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        (generated / "references" / "checklists.md").write_text("checklist\n", encoding="utf-8")
+        (generated / "analysis-report.md").write_text("report\n", encoding="utf-8")
+        (generated / "domain-extracts" / "shared.md").write_text("shared\n", encoding="utf-8")
+        (host_dir / "edit-poll.md").write_text("line\n" * 50, encoding="utf-8")
+        contradiction = {
+            "contradiction_id": "host--edit-poll--edit_window",
+            "domain": "host",
+            "feature": "edit-poll",
+            "facet": "edit_window",
+            "severity": "blocking",
+            "question": "Q?",
+            "options": ["A", "B", "C"],
+            "recommended": "A",
+            "claims": [],
+        }
+        (generated / "contradictions" / "index.json").write_text(
+            json.dumps({"blocking": [contradiction], "warnings": []}),
+            encoding="utf-8",
+        )
+        (generated / "contradictions" / "host--edit-poll--edit_window.json").write_text(
+            json.dumps(contradiction),
+            encoding="utf-8",
+        )
+        state_path = generated / "orchestrator-state.json"
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
+            side_effect=[
+                StepExecutionOutcome(kind="completed"),
+                StepExecutionOutcome(kind="completed"),
+            ],
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator.generate_gap_summary",
+            return_value="# summary\n<!-- ORCHESTRATOR:DONE -->",
+        ):
+            result = _run_phase_2(
+                state,
+                base_config,
+                orch_config,
+                tmp_path,
+                tmp_path / "sessions",
+                state_path,
+            )
+
+        steps = [call.kwargs["step_name"] for call in mock_exec.call_args_list]
+        assert steps == [
+            "phase_2_conflict:host--edit-poll--edit_window",
+            "phase_2:host:edit-poll",
+        ]
+        completed = {step.step for step in result.completed}
+        assert "phase_2_conflict:host--edit-poll--edit_window" in completed
+        assert "phase_2:host:edit-poll" in completed
+
     def test_phase_2_waiting_uses_orch_config_auto_answer(
         self,
         tmp_path: Path,
@@ -1343,6 +1486,9 @@ class TestPhase2Integration:
         with patch(
             "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
             return_value=StepExecutionOutcome(kind="waiting"),
+        ), patch(
+            "cowork_pilot.docs_orchestrator.runtime_is_waiting",
+            side_effect=[True] * 10 + [False],
         ), patch(
             "cowork_pilot.auto_answer_resolver.try_auto_answer",
             side_effect=waiting_results + [final_result],
@@ -2819,7 +2965,7 @@ class TestRunLoopCodexPauseRecovery:
             return_value=None,
         ), patch(
             "cowork_pilot.docs_orchestrator.runtime_is_waiting",
-            side_effect=[True, False],
+            side_effect=[True] + ([True] * 10) + [False],
         ), patch(
             "cowork_pilot.auto_answer_resolver.try_auto_answer",
             side_effect=waiting_results + [final_result],
@@ -2828,6 +2974,251 @@ class TestRunLoopCodexPauseRecovery:
 
         assert mock_try_auto_answer.call_count == 11
         mock_exec.assert_not_called()
+
+    def test_run_loop_existing_waiting_needs_input_uses_stdin_and_continues(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        gen_dir = self._write_state(tmp_path, "phase_2:x:y")
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_2:x:y",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+                "pending_event_id": "q1",
+                "pending_question": {
+                    "question": "Q?",
+                    "options": ["A", "B"],
+                    "recommended": "A",
+                    "blocking": True,
+                    "escalation": {
+                        "reason": "source 충돌",
+                        "mode": "auto",
+                        "related_contradictions": [],
+                    },
+                },
+                "question_context_seed": {
+                    "phase": "phase_2",
+                    "phase_template": "phase2_manual",
+                    "required_inputs": [],
+                    "optional_inputs": [],
+                    "output_files": [],
+                    "question_fingerprint": "fp",
+                },
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        orch_config.auto_answer.enabled = True
+        config = Config(project_dir=str(tmp_path))
+
+        updated_state = OrchestratorState(
+            current={"step": "phase_2", "status": "idle"},
+            completed=[StepStatus(step="phase_2:x:y", status="completed")],
+            pending=[],
+            errors=[],
+            project_summary={
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            updated_at="",
+            mode="auto",
+            manual_override=[],
+            project_dir=str(tmp_path),
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step"
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value=None,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.runtime_is_waiting",
+            side_effect=[True, True, False],
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            return_value=type(
+                "AutoAnswerResult",
+                (),
+                {"status": "needs_input", "outcome": None, "reason": "source 충돌"},
+            )(),
+        ) as mock_try_auto_answer, patch(
+            "cowork_pilot.docs_orchestrator._notify_input_required",
+        ) as mock_notify, patch(
+            "cowork_pilot.docs_orchestrator.prompt_from_runtime_payload",
+            return_value=TerminalResponse(text="A", kind="answer"),
+        ) as mock_prompt, patch(
+            "cowork_pilot.docs_orchestrator_resume.resume_waiting_docs_step",
+            return_value=type(
+                "Outcome",
+                (),
+                {"status": "completed", "state": updated_state, "step": "phase_2:x:y", "error": ""},
+            )(),
+        ) as mock_resume:
+            run_docs_orchestrator(config, orch_config)
+
+        mock_try_auto_answer.assert_called_once()
+        mock_notify.assert_called_once()
+        mock_prompt.assert_called_once()
+        mock_resume.assert_called_once()
+        mock_exec.assert_not_called()
+
+    def test_run_loop_existing_waiting_returns_to_auto_answer_after_single_stdin_response(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        gen_dir = self._write_state(tmp_path, "phase_2:x:y")
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_2:x:y",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+                "pending_event_id": "q1",
+                "pending_question": {
+                    "question": "Q?",
+                    "options": ["A", "B"],
+                    "recommended": "A",
+                    "blocking": True,
+                    "escalation": {
+                        "reason": "source 충돌",
+                        "mode": "auto",
+                        "related_contradictions": [],
+                    },
+                },
+                "question_context_seed": {
+                    "phase": "phase_2",
+                    "phase_template": "phase2_manual",
+                    "required_inputs": [],
+                    "optional_inputs": [],
+                    "output_files": [],
+                    "question_fingerprint": "fp",
+                },
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        orch_config.auto_answer.enabled = True
+        config = Config(project_dir=str(tmp_path))
+
+        waiting_state = OrchestratorState(
+            current={"step": "phase_2", "status": "running"},
+            completed=[],
+            pending=[],
+            errors=[],
+            project_summary={
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            updated_at="",
+            mode="auto",
+            manual_override=[],
+            project_dir=str(tmp_path),
+        )
+        completed_state = OrchestratorState(
+            current={"step": "phase_2", "status": "idle"},
+            completed=[StepStatus(step="phase_2:x:y", status="completed")],
+            pending=[],
+            errors=[],
+            project_summary=waiting_state.project_summary,
+            updated_at="",
+            mode="auto",
+            manual_override=[],
+            project_dir=str(tmp_path),
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step"
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value=None,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.runtime_is_waiting",
+            side_effect=[True, True, True, False],
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            side_effect=[
+                type(
+                    "AutoAnswerResult",
+                    (),
+                    {"status": "needs_input", "outcome": None, "reason": "source 충돌"},
+                )(),
+                type(
+                    "AutoAnswerResult",
+                    (),
+                    {
+                        "status": "applied",
+                        "outcome": type(
+                            "Outcome",
+                            (),
+                            {
+                                "status": "completed",
+                                "state": completed_state,
+                            },
+                        )(),
+                    },
+                )(),
+            ],
+        ) as mock_try_auto_answer, patch(
+            "cowork_pilot.docs_orchestrator._notify_input_required",
+        ) as mock_notify, patch(
+            "cowork_pilot.docs_orchestrator.prompt_from_runtime_payload",
+            return_value=TerminalResponse(text="A", kind="answer"),
+        ) as mock_prompt, patch(
+            "cowork_pilot.docs_orchestrator_resume.resume_waiting_docs_step",
+            return_value=type(
+                "Outcome",
+                (),
+                {"status": "waiting", "state": waiting_state, "step": "phase_2:x:y", "error": ""},
+            )(),
+        ) as mock_resume:
+            run_docs_orchestrator(config, orch_config)
+
+        assert mock_try_auto_answer.call_count == 2
+        mock_notify.assert_called_once()
+        mock_prompt.assert_called_once()
+        mock_resume.assert_called_once()
+        mock_exec.assert_not_called()
+
+    def test_prompt_from_runtime_payload_shows_reason_specific_handoff_context(
+        self,
+        capsys,
+    ) -> None:
+        payload = {
+            "runtime_state": "waiting_for_input",
+            "pending_question": {
+                "question": "[일관성 충돌]\n원래 질문:\nQ?",
+                "options": ["A", "B"],
+                "recommended": "A",
+                "blocking": True,
+                "escalation": {
+                    "reason": "Potential mismatch with prior gap reports.",
+                    "resolver_reason": "consistency_gap",
+                    "applied_policy": "existing_contract_first",
+                    "ai_decision_note": "기존 AI_DECISION과 충돌 가능성이 있어 사람이 확인해야 합니다.",
+                    "related_contradictions": [],
+                    "related_ai_decision_files": [
+                        "/tmp/docs/generated/gap-reports/entry--share-link-qr.md",
+                    ],
+                },
+            },
+        }
+
+        response = prompt_from_runtime_payload(
+            payload,
+            input_fn=lambda _prompt: "1",
+        )
+
+        captured = capsys.readouterr()
+        assert response == TerminalResponse(text="A", kind="answer")
+        assert "resolver_reason: consistency_gap" in captured.out
+        assert "applied_policy: existing_contract_first" in captured.out
+        assert "prior_ai_decision: /tmp/docs/generated/gap-reports/entry--share-link-qr.md" in captured.out
 
     def test_run_loop_clears_stale_runtime_on_startup(self, tmp_path: Path) -> None:
         """Runtime file with a step already completed → stale, auto-cleaned at startup."""

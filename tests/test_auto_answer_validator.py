@@ -53,6 +53,33 @@ def test_valid_answer_passes() -> None:
     assert result.answer.response_text == "A. Keep v1 minimal"
 
 
+def test_valid_answer_parses_optional_resolver_fields() -> None:
+    packet = _make_packet()
+    raw = json.dumps(
+        {
+            "event_id": packet.event_id,
+            "question_fingerprint": packet.question_fingerprint,
+            "decision": "answer",
+            "response_text": "A. Keep v1 minimal",
+            "selected_option": "A",
+            "confidence": "high",
+            "rationale": "Matches the current docs.",
+            "resolver_reason": "insufficient_evidence",
+            "applied_policy": "recommended_plus_consistency",
+            "ai_decision_note": "recommended option이 가장 일관적입니다.",
+        },
+        ensure_ascii=False,
+    )
+
+    result = validate_upper_answer(raw, packet)
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.resolver_reason == "insufficient_evidence"
+    assert result.answer.applied_policy == "recommended_plus_consistency"
+    assert result.answer.ai_decision_note == "recommended option이 가장 일관적입니다."
+
+
 def test_wrong_event_id_fails() -> None:
     packet = _make_packet()
     raw = json.dumps(
@@ -142,6 +169,28 @@ def test_escalate_passes() -> None:
     assert result.ok is True
     assert result.answer is not None
     assert result.answer.decision == "escalate"
+
+
+def test_invalid_optional_resolver_reason_fails() -> None:
+    packet = _make_packet()
+    raw = json.dumps(
+        {
+            "event_id": packet.event_id,
+            "question_fingerprint": packet.question_fingerprint,
+            "decision": "answer",
+            "response_text": "A. Keep v1 minimal",
+            "selected_option": "A",
+            "confidence": "medium",
+            "rationale": "bad metadata",
+            "resolver_reason": "unknown",
+        },
+        ensure_ascii=False,
+    )
+
+    result = validate_upper_answer(raw, packet)
+
+    assert result.ok is False
+    assert "resolver_reason" in result.error
 
 
 def test_response_text_option_prefix_mismatch() -> None:

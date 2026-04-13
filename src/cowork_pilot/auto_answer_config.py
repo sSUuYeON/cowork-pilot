@@ -21,6 +21,9 @@ class AutoAnswerConfig:
     timeout_seconds: float = 90.0
     max_attempts_per_event: int = 2
     max_rounds_per_run: int = 100
+    escalate_mode: str = "auto"
+    conflict_resolver_enabled: bool = True
+    max_conflict_resolver_attempts: int = 1
     allow_escalate: bool = True
     claude_max_chars: int = 120_000
 
@@ -57,6 +60,16 @@ def load_auto_answer_config(
         )
         cfg.max_rounds_per_run = auto_answer.get(
             "max_rounds_per_run", cfg.max_rounds_per_run,
+        )
+        cfg.escalate_mode = auto_answer.get(
+            "escalate_mode", cfg.escalate_mode,
+        )
+        cfg.conflict_resolver_enabled = auto_answer.get(
+            "conflict_resolver_enabled", cfg.conflict_resolver_enabled,
+        )
+        cfg.max_conflict_resolver_attempts = auto_answer.get(
+            "max_conflict_resolver_attempts",
+            cfg.max_conflict_resolver_attempts,
         )
         cfg.allow_escalate = auto_answer.get(
             "allow_escalate", cfg.allow_escalate,

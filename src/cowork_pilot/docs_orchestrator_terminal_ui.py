@@ -106,8 +106,54 @@ def _prompt_question(
     else:
         options = []
     recommended = str(pending.get("recommended", "")).strip()
+    escalation = pending.get("escalation")
 
     print()
+    if isinstance(escalation, dict):
+        reason = str(escalation.get("reason", "")).strip()
+        if reason:
+            print(f"[auto-answer escalation] {reason}")
+        resolver_reason = str(escalation.get("resolver_reason", "")).strip()
+        if resolver_reason:
+            print(f"  resolver_reason: {resolver_reason}")
+        applied_policy = str(escalation.get("applied_policy", "")).strip()
+        if applied_policy:
+            print(f"  applied_policy: {applied_policy}")
+        note = str(escalation.get("ai_decision_note", "")).strip()
+        if note:
+            print(f"  note: {note}")
+        raw_related = escalation.get("related_contradictions", [])
+        if isinstance(raw_related, (list, tuple)):
+            for raw_item in raw_related[:3]:
+                if not isinstance(raw_item, dict):
+                    continue
+                contradiction_id = str(raw_item.get("contradiction_id", "")).strip()
+                if contradiction_id:
+                    print(f"  conflict: {contradiction_id}")
+                raw_claims = raw_item.get("claims", [])
+                if isinstance(raw_claims, (list, tuple)):
+                    for raw_claim in raw_claims[:2]:
+                        if not isinstance(raw_claim, dict):
+                            continue
+                        source_file = str(raw_claim.get("source_file", "")).strip()
+                        source_section = str(raw_claim.get("source_section", "")).strip()
+                        excerpt = str(raw_claim.get("excerpt", "")).strip()
+                        location = (
+                            f"{source_file}#{source_section}"
+                            if source_section else source_file
+                        )
+                        if location or excerpt:
+                            print(f"    - {location}: {excerpt}")
+        raw_ai_decisions = escalation.get("related_ai_decision_files", [])
+        if isinstance(raw_ai_decisions, (list, tuple)):
+            for ai_path in raw_ai_decisions[:3]:
+                resolved = str(ai_path).strip()
+                if resolved:
+                    print(f"  prior_ai_decision: {resolved}")
+        original_question = str(escalation.get("original_question", "")).strip()
+        if original_question and original_question != question:
+            print("  original lower-question:")
+            print(f"    {original_question}")
     if question:
         print(question)
     for i, option in enumerate(options, start=1):

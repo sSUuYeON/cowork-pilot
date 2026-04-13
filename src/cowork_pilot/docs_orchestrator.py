@@ -22,7 +22,10 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal
 
-from cowork_pilot.auto_answer_context import resolve_phase2_step_inputs
+from cowork_pilot.auto_answer_context import (
+    resolve_phase2_conflict_inputs,
+    resolve_phase2_step_inputs,
+)
 from cowork_pilot.auto_answer_models import PendingQuestionPacket, Phase2StepInputs
 from cowork_pilot.config import Config, DocsOrchestratorConfig
 from cowork_pilot.docs_orchestrator_codex import CodexStepResult, run_codex_step
@@ -59,6 +62,11 @@ from cowork_pilot.quality_gate import GateResult, check_phase1_quality
 from cowork_pilot.orchestrator.quality_gate import (
     Phase1Result,
     evaluate_phase1,
+)
+from cowork_pilot.source_contradictions import (
+    detect_source_contradictions,
+    load_contradiction_report,
+    write_contradiction_report,
 )
 
 
@@ -183,30 +191,25 @@ def _generate_specs_index(specs_dir: Path) -> None:
 _DEFAULT_MAX_INTERACTIVE_RESUMES = 20
 
 
-def _resolve_waiting_runtime_interactively(
+@dataclass(frozen=True)
+class WaitingResolutionResult:
+    status: Literal["resolved", "paused", "failed"]
+    state: OrchestratorState
+
+
+def _resolve_waiting_runtime_from_stdin(
     config: Config,
     orch_config: DocsOrchestratorConfig,
     project_dir: Path,
     state_path: Path,
-    *,
-    max_interactive_resumes: int = _DEFAULT_MAX_INTERACTIVE_RESUMES,
 ) -> OrchestratorState | None:
-    """Resolve a waiting Codex runtime by prompting the user in-process.
-
-    This is the in-process interactive loop for docs-orchestrator (spec
-    Chunk 4). It repeatedly:
-
-    1. Loads the waiting runtime sidecar.
-    2. Prompts the user via the docs terminal UI.
-    3. Calls :func:`resume_waiting_docs_step` to apply the answer.
-    4. Loops while the step remains in ``waiting``.
+    """Resolve exactly one waiting Codex prompt from stdin.
 
     Return-value contract (see spec MUST 1, MUST 2, MUST 4):
 
-    - ``None`` when the user cancels (EOF/Ctrl-C), when the
-      ``max_interactive_resumes`` cap is reached, or when the helper needs
-      to bail out without progress. The caller MUST treat this as "pause
-      and return" — it MUST NOT fall through to the next phase.
+    - ``None`` when the user cancels (EOF/Ctrl-C), or when the helper
+      needs to bail out without progress. The caller MUST treat this as
+      "pause and return" — it MUST NOT fall through to the next phase.
     - An :class:`OrchestratorState` otherwise. On both ``completed`` and
       ``failed`` outcomes the latest state is returned. To distinguish
       the two the caller inspects the post-helper runtime sidecar:
@@ -224,61 +227,177 @@ def _resolve_waiting_runtime_interactively(
     # helpers from this module at import time).
     from cowork_pilot.docs_orchestrator_resume import resume_waiting_docs_step
 
+    if not runtime_is_waiting(project_dir):
+        return load_state(state_path)
+
+    runtime = load_runtime(project_dir)
+    if runtime is None:
+        # Runtime file vanished between the guard and the load — treat
+        # it as "resolved externally" and refresh state from disk.
+        return load_state(state_path)
+
+    response = prompt_from_runtime_payload(runtime)
+    if response is None:
+        # User cancelled (EOF / Ctrl-C). Spec MUST 1: caller pauses.
+        return None
+
+    try:
+        outcome = resume_waiting_docs_step(
+            config,
+            orch_config,
+            response_text=response.text,
+            response_kind=response.kind,
+        )
+    except RuntimeError as exc:
+        print(
+            f"docs-orchestrator resume failed: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+    if outcome.status == "completed":
+        return outcome.state
+
+    if outcome.status == "failed":
+        print(
+            f"docs-orchestrator step {outcome.step} failed: "
+            f"{outcome.error}",
+            file=sys.stderr,
+        )
+        # Spec MUST 2: caller returns; do not loop further.
+        return outcome.state
+
+    # waiting → caller decides whether to re-enter stdin or return to auto-answer.
+    return outcome.state
+
+
+def _resolve_waiting_runtime_interactively(
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    state_path: Path,
+    *,
+    max_interactive_resumes: int = _DEFAULT_MAX_INTERACTIVE_RESUMES,
+) -> OrchestratorState | None:
+    """Interactive stdin loop for explicit interactive-resume mode."""
     attempts = 0
+    current_state = load_state(state_path)
+
     while runtime_is_waiting(project_dir):
         if attempts >= max_interactive_resumes:
             print(
-                "docs-orchestrator paused: interactive resume attempt cap "
+                "docs-orchestrator paused: stdin resume attempt cap "
                 f"reached ({max_interactive_resumes}).\n"
                 "Run with --docs-subcommand resume to continue.",
                 file=sys.stderr,
             )
             return None
 
-        runtime = load_runtime(project_dir)
-        if runtime is None:
-            # Runtime file vanished between the guard and the load — treat
-            # it as "resolved externally" and refresh state from disk.
-            return load_state(state_path)
-
-        response = prompt_from_runtime_payload(runtime)
-        if response is None:
-            # User cancelled (EOF / Ctrl-C). Spec MUST 1: caller pauses.
+        returned_state = _resolve_waiting_runtime_from_stdin(
+            config,
+            orch_config,
+            project_dir,
+            state_path,
+        )
+        if returned_state is None:
             return None
-
+        current_state = returned_state
         attempts += 1
-        try:
-            outcome = resume_waiting_docs_step(
+
+        post_runtime = load_runtime(project_dir)
+        if (
+            post_runtime is not None
+            and str(post_runtime.get("runtime_state", "")) == "failed"
+        ):
+            return current_state
+
+    return current_state
+
+
+def _resolve_waiting_runtime_with_auto_answer(
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    state_path: Path,
+    state: OrchestratorState,
+) -> WaitingResolutionResult:
+    """Resolve a waiting runtime via auto-answer and stdin fallback."""
+    auto_answer_config = getattr(orch_config, "auto_answer", None)
+    if auto_answer_config is None or not auto_answer_config.enabled:
+        return WaitingResolutionResult(status="paused", state=state)
+
+    from cowork_pilot.auto_answer_resolver import try_auto_answer
+
+    current_state = state
+    max_auto_rounds = max(
+        1,
+        int(getattr(auto_answer_config, "max_rounds_per_run", 100)),
+    )
+
+    for _ in range(max_auto_rounds):
+        auto_answer_result = try_auto_answer(
+            config,
+            orch_config,
+            auto_answer_config,
+            project_dir,
+        )
+
+        if auto_answer_result.status == "applied":
+            assert auto_answer_result.outcome is not None
+            current_state = auto_answer_result.outcome.state
+            if auto_answer_result.outcome.status == "failed":
+                return WaitingResolutionResult(
+                    status="failed",
+                    state=current_state,
+                )
+            if not runtime_is_waiting(project_dir):
+                return WaitingResolutionResult(
+                    status="resolved",
+                    state=current_state,
+                )
+            continue
+
+        if auto_answer_result.status == "needs_input":
+            _notify_input_required(project_dir)
+            returned_state = _resolve_waiting_runtime_from_stdin(
                 config,
                 orch_config,
-                response_text=response.text,
-                response_kind=response.kind,
+                project_dir,
+                state_path,
             )
-        except RuntimeError as exc:
-            print(
-                f"docs-orchestrator resume failed: {exc}",
-                file=sys.stderr,
-            )
-            return None
+            if returned_state is None:
+                return WaitingResolutionResult(
+                    status="paused",
+                    state=current_state,
+                )
+            current_state = returned_state
+            post_runtime = load_runtime(project_dir)
+            if (
+                post_runtime is not None
+                and str(post_runtime.get("runtime_state", "")) == "failed"
+            ):
+                return WaitingResolutionResult(
+                    status="failed",
+                    state=current_state,
+                )
+            if not runtime_is_waiting(project_dir):
+                return WaitingResolutionResult(
+                    status="resolved",
+                    state=current_state,
+                )
+            continue
 
-        if outcome.status == "completed":
-            return outcome.state
+        break
 
-        if outcome.status == "failed":
-            print(
-                f"docs-orchestrator step {outcome.step} failed: "
-                f"{outcome.error}",
-                file=sys.stderr,
-            )
-            # Spec MUST 2: caller returns; do not loop further.
-            return outcome.state
-
-        # waiting → loop continues with updated runtime payload.
-
-    # Runtime was not waiting on entry (or became non-waiting between the
-    # check and the loop). Refresh the state so the caller still has the
-    # latest view without violating MUST 4 for this path.
-    return load_state(state_path)
+    post_runtime = load_runtime(project_dir)
+    if (
+        post_runtime is not None
+        and str(post_runtime.get("runtime_state", "")) == "failed"
+    ):
+        return WaitingResolutionResult(status="failed", state=current_state)
+    if not runtime_is_waiting(project_dir):
+        return WaitingResolutionResult(status="resolved", state=current_state)
+    return WaitingResolutionResult(status="paused", state=current_state)
 
 
 # ── Public entry point ──────────────────────────────────────────────
@@ -343,52 +462,17 @@ def run_docs_orchestrator(
                 ):
                     return
             else:
-                auto_answer_config = getattr(orch_config, "auto_answer", None)
-                if auto_answer_config is not None and auto_answer_config.enabled:
-                    from cowork_pilot.auto_answer_resolver import try_auto_answer
-
-                    max_auto_rounds = max(
-                        1,
-                        int(getattr(auto_answer_config, "max_rounds_per_run", 100)),
-                    )
-                    auto_answer_result = None
-
-                    for _ in range(max_auto_rounds):
-                        auto_answer_result = try_auto_answer(
-                            config,
-                            orch_config,
-                            auto_answer_config,
-                            project_dir,
-                        )
-
-                        if auto_answer_result.status != "applied":
-                            break
-
-                        assert auto_answer_result.outcome is not None
-                        state = auto_answer_result.outcome.state
-
-                        if auto_answer_result.outcome.status == "completed":
-                            break
-                        if auto_answer_result.outcome.status == "failed":
-                            return
-
-                    if not runtime_is_waiting(project_dir):
-                        pass
-                    else:
-                        post_runtime = load_runtime(project_dir)
-                        if (
-                            post_runtime is not None
-                            and str(post_runtime.get("runtime_state", ""))
-                            == "failed"
-                        ):
-                            return
-                        print(
-                            "docs-orchestrator paused: Codex session waiting for user input.\n"
-                            "Run with --docs-subcommand resume --response '...' to continue.",
-                            file=sys.stderr,
-                        )
-                        return
-                else:
+                resolution = _resolve_waiting_runtime_with_auto_answer(
+                    config,
+                    orch_config,
+                    project_dir,
+                    state_path,
+                    state,
+                )
+                state = resolution.state
+                if resolution.status == "failed":
+                    return
+                if resolution.status == "paused":
                     print(
                         "docs-orchestrator paused: Codex session waiting for user input.\n"
                         "Run with --docs-subcommand resume --response '...' to continue.",
@@ -509,6 +593,18 @@ def run_docs_orchestrator(
                 # outer ``while True`` loop (continue the state machine).
                 continue
 
+            resolution = _resolve_waiting_runtime_with_auto_answer(
+                config,
+                orch_config,
+                project_dir,
+                state_path,
+                state,
+            )
+            state = resolution.state
+            if resolution.status == "failed":
+                return
+            if resolution.status == "resolved":
+                continue
             print(
                 "docs-orchestrator paused: waiting for user response.\n"
                 "Run with --docs-subcommand resume to continue.",
@@ -818,6 +914,13 @@ def _run_phase_1_5(
     has_new_gate_fail = not overview_gate.ok
 
     if not has_coverage_fail and not has_new_gate_fail:
+        contradiction_report = detect_source_contradictions(project_dir / _GENERATED_DIR)
+        write_contradiction_report(project_dir / _GENERATED_DIR, contradiction_report)
+        if contradiction_report.blocking:
+            print(
+                f"  ⚠ Source contradictions {len(contradiction_report.blocking)}개 감지 (phase_2에서 우선 해소)",
+                file=sys.stderr,
+            )
         # SOURCE 태그 미커버는 advisory — passed 판정에 포함되지 않음
         if gate_result.uncovered_sections:
             print(
@@ -988,19 +1091,109 @@ def _run_phase_2(
     gap_reports_dir.mkdir(parents=True, exist_ok=True)
 
     features_with_lines = _get_features_with_lines(project_dir, state)
+    completed_steps = {s.step for s in state.completed}
+    contradiction_report = load_contradiction_report(generated_dir)
+    pending_conflicts = [
+        item
+        for item in contradiction_report.blocking
+        if f"phase_2_conflict:{item.contradiction_id}" not in completed_steps
+    ]
 
     # Filter out individually completed features before bundling
-    completed_steps = {s.step for s in state.completed}
     features_with_lines = [
         (d, f, lines) for d, f, lines in features_with_lines
         if f"phase_2:{d}:{f}" not in completed_steps
         and not _is_feature_in_completed_bundle(d, f, "phase_2", completed_steps)
     ]
-
-    if not features_with_lines:
-        return state
-
     bundles = _resolve_bundles(features_with_lines, orch_config, state)
+
+    extracts_info = compute_available_extracts(
+        project_dir / "docs" / "generated" / "domain-extracts"
+    )
+    overview_reasons = load_overview_reasons(project_dir)
+
+    def _run_phase2_inputs(
+        *,
+        step_name: str,
+        inputs: Phase2StepInputs,
+        watch_mode: bool,
+    ) -> StepExecutionOutcome:
+        prompt = build_session_prompt(
+            inputs.phase_template,
+            **inputs.render_kwargs,
+        )
+        expected_files = _parse_expected_files(prompt)
+        assert set(expected_files) == set(inputs.output_files), (
+            f"expected_files drift: template={expected_files}, "
+            f"inputs={inputs.output_files}"
+        )
+        return _execute_orchestrator_step(
+            step_name=step_name,
+            prompt=prompt,
+            prompt_phase=inputs.phase_template,
+            prompt_kwargs=inputs.render_kwargs,
+            expected_files=expected_files,
+            watch_mode=watch_mode,
+            config=config,
+            orch_config=orch_config,
+            project_dir=project_dir,
+            base_path=base_path,
+            phase2_inputs=inputs,
+        )
+
+    for contradiction in pending_conflicts:
+        step_name = f"phase_2_conflict:{contradiction.contradiction_id}"
+        completed_steps = {s.step for s in state.completed}
+        if step_name in completed_steps:
+            continue
+
+        state = _update_state_running(state, step_name)
+        save_state(state, state_path)
+
+        watch_mode = _determine_watch_mode(
+            f"phase_2:{contradiction.domain}:{contradiction.feature}",
+            orch_config,
+        )
+        mode_str = "manual" if not watch_mode else "auto"
+        inputs = resolve_phase2_conflict_inputs(
+            project_dir=project_dir,
+            contradiction=contradiction,
+            phase_template=f"phase2_conflict_{mode_str}",
+            extracts=extracts_info,
+            overview_reasons=overview_reasons,
+        )
+        outcome = _run_phase2_inputs(
+            step_name=step_name,
+            inputs=inputs,
+            watch_mode=watch_mode,
+        )
+        if outcome.kind == "failed":
+            return _update_state_error(
+                state,
+                step_name,
+                outcome.error or f"충돌 해소 단계 실행 실패: {step_name}",
+            )
+        if outcome.kind == "waiting":
+            resolution = _resolve_waiting_runtime_with_auto_answer(
+                config,
+                orch_config,
+                project_dir,
+                state_path,
+                state,
+            )
+            state = resolution.state
+            if resolution.status == "failed":
+                return state
+            if resolution.status == "paused":
+                return state
+            continue
+
+        state = _update_state_completed(
+            state,
+            step_name,
+            f"충돌 해소 완료: {contradiction.domain}/{contradiction.feature}",
+        )
+        save_state(state, state_path)
 
     for bundle in bundles:
         # Step name: use first feature as identifier
@@ -1021,92 +1214,39 @@ def _run_phase_2(
 
         # Determine mode (§6.4 hybrid: check domain against manual_override)
         watch_mode = _determine_watch_mode(step_name, orch_config)
-
         mode_str = "manual" if not watch_mode else "auto"
-        phase_template = f"phase2_{mode_str}"
-
-        # Single-source overview context (plan Chunk 4 Step 5):
-        # explicit, non-hook-driven injection at the render call site.
-        extracts_info = compute_available_extracts(
-            project_dir / "docs" / "generated" / "domain-extracts"
-        )
-        overview_reasons = load_overview_reasons(project_dir)
 
         inputs = resolve_phase2_step_inputs(
             project_dir=project_dir,
             step_name=step_name,
-            phase_template=phase_template,
+            phase_template=f"phase2_{mode_str}",
             bundle=bundle,
             extracts=extracts_info,
             overview_reasons=overview_reasons,
         )
-
-        prompt = build_session_prompt(
-            inputs.phase_template,
-            **inputs.render_kwargs,
-        )
-        expected_files = _parse_expected_files(prompt)
-        assert set(expected_files) == set(inputs.output_files), (
-            f"expected_files drift: template={expected_files}, "
-            f"inputs={inputs.output_files}"
-        )
-
-        outcome = _execute_orchestrator_step(
+        outcome = _run_phase2_inputs(
             step_name=step_name,
-            prompt=prompt,
-            prompt_phase=inputs.phase_template,
-            prompt_kwargs=inputs.render_kwargs,
-            expected_files=expected_files,
+            inputs=inputs,
             watch_mode=watch_mode,
-            config=config,
-            orch_config=orch_config,
-            project_dir=project_dir,
-            base_path=base_path,
-            phase2_inputs=inputs,
         )
         if outcome.kind == "failed":
             return _update_state_error(
                 state, step_name, outcome.error or f"갭 분석 단계 실행 실패: {step_name}",
             )
         if outcome.kind == "waiting":
-            from cowork_pilot.auto_answer_resolver import try_auto_answer
-
-            auto_answer_config = getattr(orch_config, "auto_answer", None)
-
-            if auto_answer_config is not None and auto_answer_config.enabled:
-                max_auto_rounds = max(
-                    1,
-                    int(getattr(auto_answer_config, "max_rounds_per_run", 100)),
-                )
-                auto_answer_result = None
-
-                for _ in range(max_auto_rounds):
-                    auto_answer_result = try_auto_answer(
-                        config,
-                        orch_config,
-                        auto_answer_config,
-                        project_dir,
-                    )
-
-                    if auto_answer_result.status != "applied":
-                        break
-
-                    assert auto_answer_result.outcome is not None
-                    state = auto_answer_result.outcome.state
-
-                    if auto_answer_result.outcome.status == "completed":
-                        break
-                    if auto_answer_result.outcome.status == "failed":
-                        return auto_answer_result.outcome.state
-
-                if (
-                    auto_answer_result is not None
-                    and auto_answer_result.status == "applied"
-                    and auto_answer_result.outcome is not None
-                    and auto_answer_result.outcome.status == "completed"
-                ):
-                    continue
-            return state
+            resolution = _resolve_waiting_runtime_with_auto_answer(
+                config,
+                orch_config,
+                project_dir,
+                state_path,
+                state,
+            )
+            state = resolution.state
+            if resolution.status == "failed":
+                return state
+            if resolution.status == "paused":
+                return state
+            continue
 
         state = _update_state_completed(state, step_name, f"갭 분석 완료: {step_name}")
         save_state(state, state_path)
@@ -2076,6 +2216,29 @@ def _notify_escalate_message(msg: str) -> None:
         notify("⚠️ docs-orchestrator FATAL", msg[:100], tts=False)
     except Exception:
         pass
+
+
+def _notify_input_required(project_dir: Path) -> None:
+    """Send a best-effort notification when stdin input is required."""
+    runtime = load_runtime(project_dir)
+    if runtime is None:
+        return
+
+    pending_question = runtime.get("pending_question", {})
+    pending = dict(pending_question) if isinstance(pending_question, dict) else {}
+    escalation = pending.get("escalation", {})
+    escalation_data = dict(escalation) if isinstance(escalation, dict) else {}
+
+    reason = str(escalation_data.get("reason", "")).strip()
+    question = str(pending.get("question", "")).strip()
+    message = reason or question or "사용자 입력이 필요합니다."
+
+    try:
+        from cowork_pilot.responder import notify
+
+        notify("🔔 Docs Orchestrator — Input Required", message[:100], tts=False)
+    except Exception:
+        print(f"  INPUT REQUIRED: {message}", file=sys.stderr)
 
 
 # ── Session management helpers ──────────────────────────────────────
