@@ -9,6 +9,10 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
+from cowork_pilot.auto_answer_config import (
+    AutoAnswerConfig,
+    load_auto_answer_config,
+)
 from cowork_pilot.planning.runtime_models import (
     ApprovalPolicy,
     AssumptionScope,
@@ -128,6 +132,9 @@ class DocsOrchestratorConfig:
     # Interactive resume (Codex waiting 상태에서 같은 터미널로 prompt 여부)
     interactive_resume: bool = False
 
+    # Phase2 waiting 질문에 대한 상위 one-shot auto-answer 설정
+    auto_answer: AutoAnswerConfig = field(default_factory=AutoAnswerConfig)
+
 
 def load_docs_orchestrator_config(
     path: Path, base_config: Config | None = None
@@ -170,6 +177,13 @@ def load_docs_orchestrator_config(
         else:
             orch.engine_command = base_config.claude_command
             orch.engine_args = base_config.claude_args or ["-p"]
+
+    orch.auto_answer = load_auto_answer_config(
+        path,
+        base_engine=orch.engine,
+        base_engine_command=orch.engine_command,
+        base_engine_args=orch.engine_args,
+    )
 
     return orch
 

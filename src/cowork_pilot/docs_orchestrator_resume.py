@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from cowork_pilot.auto_answer_models import PendingQuestionPacket
 from cowork_pilot.config import Config, DocsOrchestratorConfig
 from cowork_pilot.orchestrator_state import (
     OrchestratorState,
@@ -106,10 +107,16 @@ def _docs_resume_expected_files(step: str, project_dir: Path) -> list[Path]:
             return [domain_dir, domain_dir / "_overview.md"]
         return []
     if step.startswith("phase_2:"):
-        parts = step.split(":")
-        if len(parts) >= 3:
-            domain, feature = parts[1], parts[2]
-            return [generated / "gap-reports" / f"{domain}--{feature}.md"]
+        rest = step[len("phase_2:"):]
+        files: list[Path] = []
+        for pair in rest.split("+"):
+            parts = pair.split(":", 1)
+            if len(parts) != 2:
+                continue
+            domain, feature = parts
+            files.append(generated / "gap-reports" / f"{domain}--{feature}.md")
+        if files:
+            return files
         return []
     if step == "phase_3_A":
         design_docs = project_dir / "docs" / "design-docs"
@@ -159,6 +166,7 @@ def resume_waiting_docs_step(
     *,
     response_text: str,
     response_kind: str,
+    expected_files_override: list[Path] | None = None,
 ) -> DocsResumeOutcome:
     """Resume a single waiting docs-orchestrator step and return the outcome.
 
@@ -218,7 +226,11 @@ def resume_waiting_docs_step(
 
     # --- 2. Load state and resolve expected files -----------------------
     state = load_state(state_path)
-    expected_files = _docs_resume_expected_files(step, project_dir)
+    expected_files = (
+        list(expected_files_override)
+        if expected_files_override is not None
+        else _docs_resume_expected_files(step, project_dir)
+    )
 
     # --- 3. Call the Codex backend --------------------------------------
     codex_cmd = getattr(orch_config, "engine_command", "codex")
@@ -258,6 +270,28 @@ def resume_waiting_docs_step(
             "pending_question": result.pending_question,
             "pending_approval": result.pending_approval,
         }
+        if "question_context_seed" in runtime:
+            seed = dict(runtime["question_context_seed"])
+            if (
+                result.waiting_kind == "input"
+                and isinstance(result.pending_question, dict)
+                and result.pending_question.get("question")
+                and result.pending_question.get("options")
+            ):
+                seed["question_fingerprint"] = (
+                    PendingQuestionPacket.compute_fingerprint(
+                        step=step,
+                        event_id=result.pending_event_id or "",
+                        question=str(result.pending_question["question"]),
+                        options=[
+                            str(option)
+                            for option in result.pending_question["options"]
+                        ],
+                    )
+                )
+            new_runtime["question_context_seed"] = seed
+        if "auto_answer_state" in runtime:
+            new_runtime["auto_answer_state"] = runtime["auto_answer_state"]
         write_runtime(project_dir, new_runtime)
         # State is intentionally NOT touched on waiting (MUST 4 still
         # holds: we return the freshly-loaded state as-is).

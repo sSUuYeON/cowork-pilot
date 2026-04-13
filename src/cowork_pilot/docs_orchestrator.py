@@ -22,6 +22,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal
 
+from cowork_pilot.auto_answer_context import resolve_phase2_step_inputs
+from cowork_pilot.auto_answer_models import PendingQuestionPacket, Phase2StepInputs
 from cowork_pilot.config import Config, DocsOrchestratorConfig
 from cowork_pilot.docs_orchestrator_codex import CodexStepResult, run_codex_step
 from cowork_pilot.docs_orchestrator_runtime import (
@@ -341,12 +343,58 @@ def run_docs_orchestrator(
                 ):
                     return
             else:
-                print(
-                    "docs-orchestrator paused: Codex session waiting for user input.\n"
-                    "Run with --docs-subcommand resume --response '...' to continue.",
-                    file=sys.stderr,
-                )
-                return
+                auto_answer_config = getattr(orch_config, "auto_answer", None)
+                if auto_answer_config is not None and auto_answer_config.enabled:
+                    from cowork_pilot.auto_answer_resolver import try_auto_answer
+
+                    max_auto_rounds = max(
+                        1,
+                        int(getattr(auto_answer_config, "max_rounds_per_run", 100)),
+                    )
+                    auto_answer_result = None
+
+                    for _ in range(max_auto_rounds):
+                        auto_answer_result = try_auto_answer(
+                            config,
+                            orch_config,
+                            auto_answer_config,
+                            project_dir,
+                        )
+
+                        if auto_answer_result.status != "applied":
+                            break
+
+                        assert auto_answer_result.outcome is not None
+                        state = auto_answer_result.outcome.state
+
+                        if auto_answer_result.outcome.status == "completed":
+                            break
+                        if auto_answer_result.outcome.status == "failed":
+                            return
+
+                    if not runtime_is_waiting(project_dir):
+                        pass
+                    else:
+                        post_runtime = load_runtime(project_dir)
+                        if (
+                            post_runtime is not None
+                            and str(post_runtime.get("runtime_state", ""))
+                            == "failed"
+                        ):
+                            return
+                        print(
+                            "docs-orchestrator paused: Codex session waiting for user input.\n"
+                            "Run with --docs-subcommand resume --response '...' to continue.",
+                            file=sys.stderr,
+                        )
+                        return
+                else:
+                    print(
+                        "docs-orchestrator paused: Codex session waiting for user input.\n"
+                        "Run with --docs-subcommand resume --response '...' to continue.",
+                        file=sys.stderr,
+                    )
+                    return
 
     # Recover from a previous crash (§8.3)
     if state.current.get("status") == "running":
@@ -974,13 +1022,8 @@ def _run_phase_2(
         # Determine mode (§6.4 hybrid: check domain against manual_override)
         watch_mode = _determine_watch_mode(step_name, orch_config)
 
-        # Build prompt
         mode_str = "manual" if not watch_mode else "auto"
         phase_template = f"phase2_{mode_str}"
-
-        features_for_prompt = [
-            {"domain": d, "feature": f} for d, f in bundle
-        ]
 
         # Single-source overview context (plan Chunk 4 Step 5):
         # explicit, non-hook-driven injection at the render call site.
@@ -989,42 +1032,80 @@ def _run_phase_2(
         )
         overview_reasons = load_overview_reasons(project_dir)
 
-        prompt = build_session_prompt(
-            phase_template,
-            project_dir=str(project_dir),
-            features=features_for_prompt,
-            domain=first_domain,
-            feature=first_feature,
+        inputs = resolve_phase2_step_inputs(
+            project_dir=project_dir,
+            step_name=step_name,
+            phase_template=phase_template,
+            bundle=bundle,
             extracts=extracts_info,
             overview_reasons=overview_reasons,
         )
 
+        prompt = build_session_prompt(
+            inputs.phase_template,
+            **inputs.render_kwargs,
+        )
         expected_files = _parse_expected_files(prompt)
+        assert set(expected_files) == set(inputs.output_files), (
+            f"expected_files drift: template={expected_files}, "
+            f"inputs={inputs.output_files}"
+        )
 
         outcome = _execute_orchestrator_step(
             step_name=step_name,
             prompt=prompt,
-            prompt_phase=phase_template,
-            prompt_kwargs=dict(
-                project_dir=str(project_dir),
-                features=features_for_prompt,
-                domain=first_domain,
-                feature=first_feature,
-                extracts=extracts_info,
-                overview_reasons=overview_reasons,
-            ),
+            prompt_phase=inputs.phase_template,
+            prompt_kwargs=inputs.render_kwargs,
             expected_files=expected_files,
             watch_mode=watch_mode,
             config=config,
             orch_config=orch_config,
             project_dir=project_dir,
             base_path=base_path,
+            phase2_inputs=inputs,
         )
         if outcome.kind == "failed":
             return _update_state_error(
                 state, step_name, outcome.error or f"갭 분석 단계 실행 실패: {step_name}",
             )
         if outcome.kind == "waiting":
+            from cowork_pilot.auto_answer_resolver import try_auto_answer
+
+            auto_answer_config = getattr(orch_config, "auto_answer", None)
+
+            if auto_answer_config is not None and auto_answer_config.enabled:
+                max_auto_rounds = max(
+                    1,
+                    int(getattr(auto_answer_config, "max_rounds_per_run", 100)),
+                )
+                auto_answer_result = None
+
+                for _ in range(max_auto_rounds):
+                    auto_answer_result = try_auto_answer(
+                        config,
+                        orch_config,
+                        auto_answer_config,
+                        project_dir,
+                    )
+
+                    if auto_answer_result.status != "applied":
+                        break
+
+                    assert auto_answer_result.outcome is not None
+                    state = auto_answer_result.outcome.state
+
+                    if auto_answer_result.outcome.status == "completed":
+                        break
+                    if auto_answer_result.outcome.status == "failed":
+                        return auto_answer_result.outcome.state
+
+                if (
+                    auto_answer_result is not None
+                    and auto_answer_result.status == "applied"
+                    and auto_answer_result.outcome is not None
+                    and auto_answer_result.outcome.status == "completed"
+                ):
+                    continue
             return state
 
         state = _update_state_completed(state, step_name, f"갭 분석 완료: {step_name}")
@@ -1878,6 +1959,7 @@ def _execute_orchestrator_step(
     prompt_phase: str | None = None,
     prompt_kwargs: dict[str, object] | None = None,
     codex_exec_config: object | None = None,
+    phase2_inputs: Phase2StepInputs | None = None,
 ) -> StepExecutionOutcome:
     """Execute one orchestrator step via the Claude or Codex backend.
 
@@ -1928,6 +2010,7 @@ def _execute_orchestrator_step(
             project_dir=project_dir,
             step_name=step_name,
             result=result,
+            phase2_inputs=phase2_inputs,
         )
         return StepExecutionOutcome(kind="waiting")
 
@@ -1942,6 +2025,7 @@ def _save_codex_waiting_runtime(
     project_dir: Path,
     step_name: str,
     result: CodexStepResult,
+    phase2_inputs: Phase2StepInputs | None = None,
 ) -> None:
     """Write ``orchestrator-runtime.json`` for a waiting Codex step."""
     runtime_state = (
@@ -1959,6 +2043,25 @@ def _save_codex_waiting_runtime(
         "pending_question": result.pending_question,
         "pending_approval": result.pending_approval,
     }
+
+    if phase2_inputs is not None:
+        fingerprint = ""
+        pending_question = result.pending_question or {}
+        if pending_question.get("question") and pending_question.get("options"):
+            fingerprint = PendingQuestionPacket.compute_fingerprint(
+                step=step_name,
+                event_id=result.pending_event_id or "",
+                question=str(pending_question["question"]),
+                options=[str(option) for option in pending_question["options"]],
+            )
+        payload["question_context_seed"] = {
+            "phase": "phase_2",
+            "phase_template": phase2_inputs.phase_template,
+            "required_inputs": [str(path) for path in phase2_inputs.required_inputs],
+            "optional_inputs": [str(path) for path in phase2_inputs.optional_inputs],
+            "output_files": [str(path) for path in phase2_inputs.output_files],
+            "question_fingerprint": fingerprint,
+        }
     write_runtime(project_dir, payload)
 
 

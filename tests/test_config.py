@@ -221,6 +221,9 @@ class TestDocsOrchestratorConfig:
         assert oc.engine == "claude"
         assert oc.engine_args == ["-p"]
         assert oc.session_open_delay == 3.0
+        assert oc.auto_answer.enabled is False
+        assert oc.auto_answer.engine == "codex"
+        assert oc.auto_answer.max_rounds_per_run == 100
 
     def test_load_from_toml(self, tmp_path):
         toml_file = tmp_path / "config.toml"
@@ -236,6 +239,14 @@ class TestDocsOrchestratorConfig:
             'adaptive_timeout_multiplier = 2.0\n'
             'docs_mode = "manual"\n'
             'manual_override = ["payment", "auth"]\n'
+            '\n'
+            '[docs_orchestrator.auto_answer]\n'
+            'enabled = true\n'
+            'engine = "codex"\n'
+            'engine_command = "/usr/bin/codex"\n'
+            'timeout_seconds = 45.0\n'
+            'max_attempts_per_event = 4\n'
+            'max_rounds_per_run = 300\n'
         )
         oc = load_docs_orchestrator_config(toml_file)
         assert oc.idle_timeout_seconds == 180.0
@@ -248,6 +259,12 @@ class TestDocsOrchestratorConfig:
         assert oc.adaptive_timeout_multiplier == 2.0
         assert oc.docs_mode == "manual"
         assert oc.manual_override == ["payment", "auth"]
+        assert oc.auto_answer.enabled is True
+        assert oc.auto_answer.engine == "codex"
+        assert oc.auto_answer.engine_command == "/usr/bin/codex"
+        assert oc.auto_answer.timeout_seconds == 45.0
+        assert oc.auto_answer.max_attempts_per_event == 4
+        assert oc.auto_answer.max_rounds_per_run == 300
 
     def test_load_missing_file(self, tmp_path):
         oc = load_docs_orchestrator_config(tmp_path / "nonexistent.toml")
@@ -268,6 +285,9 @@ class TestDocsOrchestratorConfig:
         assert oc.engine == "codex"
         assert oc.engine_command == "/usr/bin/codex"
         assert oc.engine_args == ["-q", "--fast"]
+        assert oc.auto_answer.engine == "codex"
+        assert oc.auto_answer.engine_command == "/usr/bin/codex"
+        assert oc.auto_answer.engine_args == ["-q", "--fast"]
 
     def test_session_timing_from_toml(self, tmp_path):
         toml_file = tmp_path / "config.toml"

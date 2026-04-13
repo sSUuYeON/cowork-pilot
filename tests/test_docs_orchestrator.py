@@ -1182,6 +1182,183 @@ class TestDetermineNextStepPhase2And3:
 
 
 class TestPhase2Integration:
+    def test_phase_2_waiting_uses_orch_config_auto_answer(
+        self,
+        tmp_path: Path,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+    ) -> None:
+        from cowork_pilot.docs_orchestrator import StepExecutionOutcome
+        from cowork_pilot.orchestrator_state import OrchestratorState, StepStatus
+
+        base_config.project_dir = str(tmp_path)
+        orch_config.engine = "codex"
+        orch_config.auto_answer.enabled = True
+        orch_config.auto_answer.max_rounds_per_run = 300
+
+        state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary={
+                "domains": ["auth"],
+                "features": {"auth": ["login"]},
+                "source_line_count": 100,
+            },
+            completed=[
+                StepStatus(step="phase_0", status="completed"),
+                StepStatus(step="phase_1", status="completed"),
+                StepStatus(step="phase_1_5", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        generated = tmp_path / "docs" / "generated"
+        (generated / "references").mkdir(parents=True, exist_ok=True)
+        (generated / "gap-reports").mkdir(parents=True, exist_ok=True)
+        auth_dir = generated / "domain-extracts" / "auth"
+        auth_dir.mkdir(parents=True, exist_ok=True)
+        (generated / "references" / "checklists.md").write_text("checklist\n", encoding="utf-8")
+        (generated / "analysis-report.md").write_text("report\n", encoding="utf-8")
+        (generated / "domain-extracts" / "shared.md").write_text("shared\n", encoding="utf-8")
+        (auth_dir / "login.md").write_text("line\n" * 50, encoding="utf-8")
+
+        state_path = generated / "orchestrator-state.json"
+
+        completed_state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_2:auth:login", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
+            return_value=StepExecutionOutcome(kind="waiting"),
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            return_value=type(
+                "AutoAnswerResult",
+                (),
+                {
+                    "status": "applied",
+                    "outcome": type(
+                        "Outcome",
+                        (),
+                        {
+                            "status": "completed",
+                            "state": completed_state,
+                        },
+                    )(),
+                },
+            )(),
+        ) as mock_try_auto_answer:
+            result = _run_phase_2(
+                state,
+                base_config,
+                orch_config,
+                tmp_path,
+                tmp_path / "sessions",
+                state_path,
+            )
+
+        mock_try_auto_answer.assert_called_once()
+        assert any(step.step == "phase_2:auth:login" for step in result.completed)
+
+    def test_phase_2_waiting_can_continue_past_ten_auto_answer_rounds(
+        self,
+        tmp_path: Path,
+        base_config: Config,
+        orch_config: DocsOrchestratorConfig,
+    ) -> None:
+        from cowork_pilot.docs_orchestrator import StepExecutionOutcome
+        from cowork_pilot.orchestrator_state import OrchestratorState, StepStatus
+
+        base_config.project_dir = str(tmp_path)
+        orch_config.engine = "codex"
+        orch_config.auto_answer.enabled = True
+
+        state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary={
+                "domains": ["auth"],
+                "features": {"auth": ["login"]},
+                "source_line_count": 100,
+            },
+            completed=[
+                StepStatus(step="phase_0", status="completed"),
+                StepStatus(step="phase_1", status="completed"),
+                StepStatus(step="phase_1_5", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        generated = tmp_path / "docs" / "generated"
+        (generated / "references").mkdir(parents=True, exist_ok=True)
+        (generated / "gap-reports").mkdir(parents=True, exist_ok=True)
+        auth_dir = generated / "domain-extracts" / "auth"
+        auth_dir.mkdir(parents=True, exist_ok=True)
+        (generated / "references" / "checklists.md").write_text("checklist\n", encoding="utf-8")
+        (generated / "analysis-report.md").write_text("report\n", encoding="utf-8")
+        (generated / "domain-extracts" / "shared.md").write_text("shared\n", encoding="utf-8")
+        (auth_dir / "login.md").write_text("line\n" * 50, encoding="utf-8")
+
+        state_path = generated / "orchestrator-state.json"
+
+        completed_state = OrchestratorState(
+            current={"phase": "phase_2", "step": "phase_2", "status": "idle"},
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_2:auth:login", status="completed"),
+            ],
+            project_dir=str(tmp_path),
+        )
+
+        def _auto_answer_result(*, outcome_status: str, outcome_state: OrchestratorState):
+            return type(
+                "AutoAnswerResult",
+                (),
+                {
+                    "status": "applied",
+                    "outcome": type(
+                        "Outcome",
+                        (),
+                        {
+                            "status": outcome_status,
+                            "state": outcome_state,
+                        },
+                    )(),
+                },
+            )()
+
+        waiting_results = [
+            _auto_answer_result(outcome_status="waiting", outcome_state=state)
+            for _ in range(10)
+        ]
+        final_result = _auto_answer_result(
+            outcome_status="completed",
+            outcome_state=completed_state,
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step",
+            return_value=StepExecutionOutcome(kind="waiting"),
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            side_effect=waiting_results + [final_result],
+        ) as mock_try_auto_answer:
+            result = _run_phase_2(
+                state,
+                base_config,
+                orch_config,
+                tmp_path,
+                tmp_path / "sessions",
+                state_path,
+            )
+
+        assert mock_try_auto_answer.call_count == 11
+        assert any(step.step == "phase_2:auth:login" for step in result.completed)
+
     @patch("cowork_pilot.docs_orchestrator._open_orchestrator_session")
     @patch("cowork_pilot.docs_orchestrator._wait_for_session_completion", return_value=True)
     def test_phase_2_creates_gap_reports_and_summary(
@@ -2475,6 +2652,181 @@ class TestRunLoopCodexPauseRecovery:
             run_docs_orchestrator(config, orch_config)
 
         # Phase execution must NOT have been called (loop paused on waiting)
+        mock_exec.assert_not_called()
+
+    def test_run_loop_auto_answers_existing_waiting_runtime_when_enabled(
+        self, tmp_path: Path,
+    ) -> None:
+        """Existing startup waiting runtime should try auto-answer before pausing."""
+        gen_dir = self._write_state(tmp_path, "phase_2:x:y")
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_2:x:y",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+                "pending_event_id": "q1",
+                "pending_question": {
+                    "question": "Q?",
+                    "options": ["A", "B"],
+                    "recommended": "A",
+                    "blocking": True,
+                },
+                "question_context_seed": {
+                    "phase": "phase_2",
+                    "phase_template": "phase2_manual",
+                    "required_inputs": [],
+                    "optional_inputs": [],
+                    "output_files": [],
+                    "question_fingerprint": "fp",
+                },
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        orch_config.auto_answer.enabled = True
+        orch_config.auto_answer.max_rounds_per_run = 300
+        config = Config(project_dir=str(tmp_path))
+
+        updated_state = OrchestratorState(
+            current={"step": "phase_2", "status": "idle"},
+            completed=[StepStatus(step="phase_2:x:y", status="completed")],
+            pending=[],
+            errors=[],
+            project_summary={
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            updated_at="",
+            mode="auto",
+            manual_override=[],
+            project_dir=str(tmp_path),
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step"
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value=None,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.runtime_is_waiting",
+            side_effect=[True, False],
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            return_value=type(
+                "AutoAnswerResult",
+                (),
+                {
+                    "status": "applied",
+                    "outcome": type(
+                        "Outcome",
+                        (),
+                        {
+                            "status": "completed",
+                            "state": updated_state,
+                        },
+                    )(),
+                },
+            )(),
+        ) as mock_try_auto_answer:
+            run_docs_orchestrator(config, orch_config)
+
+        mock_try_auto_answer.assert_called_once()
+        mock_exec.assert_not_called()
+
+    def test_run_loop_existing_waiting_can_continue_past_ten_auto_answer_rounds(
+        self, tmp_path: Path,
+    ) -> None:
+        """Startup waiting runtime should keep auto-answering beyond 10 rounds."""
+        gen_dir = self._write_state(tmp_path, "phase_2:x:y")
+        (gen_dir / "orchestrator-runtime.json").write_text(
+            json.dumps({
+                "backend": "codex",
+                "step": "phase_2:x:y",
+                "runtime_state": "waiting_for_input",
+                "resume_handle": "tid-001",
+                "pending_event_id": "q1",
+                "pending_question": {
+                    "question": "Q?",
+                    "options": ["A", "B"],
+                    "recommended": "A",
+                    "blocking": True,
+                },
+                "question_context_seed": {
+                    "phase": "phase_2",
+                    "phase_template": "phase2_manual",
+                    "required_inputs": [],
+                    "optional_inputs": [],
+                    "output_files": [],
+                    "question_fingerprint": "fp",
+                },
+            })
+        )
+
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        orch_config.auto_answer.enabled = True
+        config = Config(project_dir=str(tmp_path))
+
+        updated_state = OrchestratorState(
+            current={"step": "phase_2", "status": "idle"},
+            completed=[StepStatus(step="phase_2:x:y", status="completed")],
+            pending=[],
+            errors=[],
+            project_summary={
+                "domains": [],
+                "features": {},
+                "source_docs": [],
+                "source_line_count": 0,
+            },
+            updated_at="",
+            mode="auto",
+            manual_override=[],
+            project_dir=str(tmp_path),
+        )
+
+        def _auto_answer_result(*, outcome_status: str, outcome_state: OrchestratorState):
+            return type(
+                "AutoAnswerResult",
+                (),
+                {
+                    "status": "applied",
+                    "outcome": type(
+                        "Outcome",
+                        (),
+                        {
+                            "status": outcome_status,
+                            "state": outcome_state,
+                        },
+                    )(),
+                },
+            )()
+
+        waiting_results = [
+            _auto_answer_result(outcome_status="waiting", outcome_state=updated_state)
+            for _ in range(10)
+        ]
+        final_result = _auto_answer_result(
+            outcome_status="completed",
+            outcome_state=updated_state,
+        )
+
+        with patch(
+            "cowork_pilot.docs_orchestrator._execute_orchestrator_step"
+        ) as mock_exec, patch(
+            "cowork_pilot.docs_orchestrator._determine_next_step",
+            return_value=None,
+        ), patch(
+            "cowork_pilot.docs_orchestrator.runtime_is_waiting",
+            side_effect=[True, False],
+        ), patch(
+            "cowork_pilot.auto_answer_resolver.try_auto_answer",
+            side_effect=waiting_results + [final_result],
+        ) as mock_try_auto_answer:
+            run_docs_orchestrator(config, orch_config)
+
+        assert mock_try_auto_answer.call_count == 11
         mock_exec.assert_not_called()
 
     def test_run_loop_clears_stale_runtime_on_startup(self, tmp_path: Path) -> None:

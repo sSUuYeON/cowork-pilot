@@ -1,5 +1,5 @@
 [engine]
-default = "claude"
+default = "codex"
 
 [engine.codex]
 command = "codex"
@@ -82,3 +82,16 @@ open_delay_seconds = 3.0
 prompt_delay_seconds = 1.0
 detect_timeout_seconds = 10.0
 detect_poll_interval = 1.0
+
+
+[docs_orchestrator]
+docs_mode = "manual"
+interactive_resume = false
+
+[docs_orchestrator.auto_answer]
+enabled = true
+engine = "codex"
+engine_command = "codex"
+timeout_seconds = 90.0
+max_attempts_per_event = 2
+max_rounds_per_run = 300
