@@ -1,4 +1,5 @@
 {# Phase 5-outline: exec-plan 설계 — §5.5.1 #}
+{% set mode = outline_mode | default("legacy") %}
 프로젝트 경로: {{ project_dir }}
 
 읽어야 할 파일:
@@ -8,7 +9,22 @@
 - {{ project_dir }}/docs/ARCHITECTURE.md
 - {{ project_dir }}/docs/QUALITY_SCORE.md
 - {{ project_dir }}/docs/generated/analysis-report.md
+{% if shared_outline_exists %}
+- {{ shared_outline_path }}
+{% endif %}
+{% if mode == "unit" %}
+{% for spec in relevant_specs %}
+- {{ spec }}
+{% endfor %}
+{% for doc in relevant_design_docs %}
+- {{ doc }}
+{% endfor %}
+{% for overview in relevant_overviews %}
+- {{ overview }}
+{% endfor %}
+{% endif %}
 
+{% if mode == "legacy" %}
 exec-plan의 전체 구조를 설계하라. 실제 Session Prompt 내용은 채우지 않는다.
 
 1. 구현 순서를 결정한다 (의존성 분석)
@@ -20,6 +36,42 @@ exec-plan의 전체 구조를 설계하라. 실제 Session Prompt 내용은 채�
    - Session Prompt는 비워둔다 ("다음 세션에서 작성")
 4. 결과를 docs/generated/exec-plan-outline.md에 저장한다
 5. 파일 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라
+{% elif mode == "unit" %}
+이번 세션은 shared outline 분할 작성 세션이다.
+대상 unit:
+- 유형: {{ unit_type }}
+- 식별자: {{ unit_id }}
+- 라벨: {{ unit_label }}
+{% if unit_domain %}- 도메인: {{ unit_domain }}{% endif %}
+{% if unit_feature %}- 기능: {{ unit_feature }}{% endif %}
+
+docs/generated/exec-plan-outline.md가 이미 있으면 먼저 읽고, 없으면 새로 만든다.
+이번 세션은 담당 unit과 실제로 관련 있는 본문만 근거로 outline을 추가/수정한다.
+실제 Session Prompt 내용은 채우지 않는다.
+
+이번 세션의 목표:
+1. 담당 unit과 관련된 plan 후보를 추가하거나 기존 plan을 보강한다
+2. 필요한 경우 기존 plan에 chunk / Completion Criteria / Tasks / dependency를 추가한다
+3. 구현 책임이 흐려지는 전역 UX, redirect, convergence flow, 예외 상태는 독립 plan 또는 독립 chunk로 드러낸다
+4. 결과를 docs/generated/exec-plan-outline.md에 저장한다
+5. 현재 outline snapshot도 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 유지한다
+{% else %}
+이번 세션은 shared outline finalize 세션이다.
+
+해야 할 일:
+1. docs/generated/exec-plan-outline.md 전체를 다시 읽는다
+2. plan 후보를 최종 정렬하고 번호를 01-, 02- 형식으로 재배치한다
+3. 개요 표와 상세 섹션의 파일명을 동기화한다
+4. dependency 번호를 재배치 후 기준 번호로 정리한다
+5. 중복 섹션을 합치되 더 구체적인 내용을 보존한다
+6. detail 세션에서 바로 실행 가능한 수준으로 outline을 정리한다
+7. 마지막 줄에 <!-- ORCHESTRATOR:DONE --> 마커를 기록한다
+
+중요:
+- finalize는 재압축 단계가 아니다
+- 다른 세션이 넣은 세부 구현 항목을 요약해 뭉개지 마라
+- product-spec/design-doc 본문을 전부 다시 읽는 one-shot 회귀를 하지 마라
+{% endif %}
 
 다음 형식으로 작성하라:
 
@@ -51,8 +103,25 @@ exec-plan의 전체 구조를 설계하라. 실제 Session Prompt 내용은 채�
 - {{ project_dir }}/docs/generated/exec-plan-outline.md
 
 품질 규칙:
+{% if mode == "legacy" %}
 - product-spec 본문이나 design-doc 본문은 읽지 않는다 (index가 목차 역할)
 - 의존성 분석을 기반으로 구현 순서를 결정하라
 - Completion Criteria는 구체적이고 검증 가능해야 한다
+{% else %}
+- Session Prompt는 항상 `Session Prompt: (다음 세션에서 작성)`으로 비워 둔다
+- 기존 세부사항을 근거 없이 삭제하지 마라
+- plan 수를 줄이기 위해 서로 다른 책임을 억지로 합치지 마라
+- Completion Criteria는 구체적이고 검증 가능해야 한다
+- outline은 spec coverage가 아니라 UI/E2E coverage 기준으로 완성해야 한다
+- 사용자가 실제로 클릭할 수 있는 버튼, 링크, 폼 액션이 모두 outline 어딘가의 plan/chunk 책임으로 드러나야 한다
+- 모든 라우트와 리디렉션이 어느 plan/chunk에서 처리되는지 드러나야 한다
+- 다음 항목은 반드시 outline 책임으로 보여야 한다:
+  - 랜딩 페이지
+  - 역할별 첫 진입 화면
+  - 전역 리디렉션 규칙
+  - 설정/관리성 화면
+  - 삭제/종료/invalid 이후 수렴 경로
+  - offline / empty / error / invalid / closed / deleted 상태
+{% endif %}
 
 완료 시 출력 파일의 마지막 줄에 반드시 <!-- ORCHESTRATOR:DONE --> 마커를 기록하라.

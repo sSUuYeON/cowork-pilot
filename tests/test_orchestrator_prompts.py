@@ -312,6 +312,9 @@ class TestPhase5Outline:
         prompt = build_session_prompt(
             "phase5_outline",
             project_dir=PROJECT_DIR,
+            outline_mode="legacy",
+            shared_outline_exists=False,
+            shared_outline_path=f"{PROJECT_DIR}/docs/generated/exec-plan-outline.md",
         )
         _assert_common_keywords(prompt)
         assert "exec-plan-outline.md" in prompt
@@ -321,9 +324,54 @@ class TestPhase5Outline:
         prompt = build_session_prompt(
             "phase5_outline",
             project_dir=PROJECT_DIR,
+            outline_mode="legacy",
+            shared_outline_exists=False,
+            shared_outline_path=f"{PROJECT_DIR}/docs/generated/exec-plan-outline.md",
         )
         assert "Completion Criteria" in prompt
         assert "Session Prompt" in prompt
+
+    def test_unit_mode_includes_related_bodies_and_shared_outline(self) -> None:
+        prompt = build_session_prompt(
+            "phase5_outline",
+            project_dir=PROJECT_DIR,
+            outline_mode="unit",
+            shared_outline_exists=True,
+            shared_outline_path=f"{PROJECT_DIR}/docs/generated/exec-plan-outline.md",
+            unit_type="feature",
+            unit_id="payment:checkout",
+            unit_label="payment/checkout",
+            unit_domain="payment",
+            unit_feature="checkout",
+            relevant_specs=[
+                f"{PROJECT_DIR}/docs/product-specs/payment--checkout.md",
+            ],
+            relevant_design_docs=[
+                f"{PROJECT_DIR}/docs/design-docs/data-model.md",
+            ],
+            relevant_overviews=[
+                f"{PROJECT_DIR}/docs/generated/domain-extracts/payment/_overview.md",
+            ],
+        )
+        _assert_common_keywords(prompt)
+        assert "payment--checkout.md" in prompt
+        assert "data-model.md" in prompt
+        assert "_overview.md" in prompt
+        assert "UI/E2E coverage" in prompt
+        assert "버튼, 링크, 폼 액션" in prompt
+
+    def test_finalize_mode_mentions_normalization(self) -> None:
+        prompt = build_session_prompt(
+            "phase5_outline",
+            project_dir=PROJECT_DIR,
+            outline_mode="finalize",
+            shared_outline_exists=True,
+            shared_outline_path=f"{PROJECT_DIR}/docs/generated/exec-plan-outline.md",
+        )
+        _assert_common_keywords(prompt)
+        assert "finalize" in prompt.lower()
+        assert "번호를 01-" in prompt
+        assert "one-shot 회귀를 하지 마라" in prompt
 
 
 class TestPhase5Detail:

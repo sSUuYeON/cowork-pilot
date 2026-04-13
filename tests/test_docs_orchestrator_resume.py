@@ -137,6 +137,21 @@ def test_docs_resume_expected_files_for_phase2_conflict(tmp_path: Path) -> None:
     ]
 
 
+def test_docs_resume_expected_files_for_phase5_outline_variants(tmp_path: Path) -> None:
+    expected_unit = _docs_resume_expected_files(
+        "phase_5_outline_unit:payment:refund",
+        tmp_path,
+    )
+    expected_finalize = _docs_resume_expected_files(
+        "phase_5_outline_finalize",
+        tmp_path,
+    )
+    outline_path = tmp_path / "docs" / "generated" / "exec-plan-outline.md"
+
+    assert expected_unit == [outline_path]
+    assert expected_finalize == [outline_path]
+
+
 # ── completed ────────────────────────────────────────────────────────
 
 

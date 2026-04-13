@@ -402,6 +402,10 @@ def _find_output_files_for_step(step: str, project_dir: Path) -> list[Path]:
         return []
     elif step == "phase_5_outline":
         return [project_dir / "docs" / "generated" / "exec-plan-outline.md"]
+    elif step.startswith("phase_5_outline_unit:"):
+        return [project_dir / "docs" / "generated" / "exec-plan-outline.md"]
+    elif step == "phase_5_outline_finalize":
+        return [project_dir / "docs" / "generated" / "exec-plan-outline.md"]
     elif step.startswith("phase_5_detail:"):
         plan_name = step[len("phase_5_detail:"):]
         return [project_dir / "docs" / "exec-plans" / "planning" / f"{plan_name}.md"]

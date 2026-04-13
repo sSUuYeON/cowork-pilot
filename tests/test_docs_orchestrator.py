@@ -1888,6 +1888,24 @@ class TestDetermineNextStepFullFlow:
         )
         assert _determine_next_step(state) == "phase_5_outline"
 
+    def test_phase_4_3_done_returns_phase_5_outline_global_unit_for_codex(
+        self,
+        phase3_completed_state: OrchestratorState,
+    ):
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        state = OrchestratorState(
+            current=phase3_completed_state.current,
+            project_summary=phase3_completed_state.project_summary,
+            completed=list(phase3_completed_state.completed) + [
+                StepStatus(step="phase_4_1", status="completed", completed_at="2026-04-01T14:30:00", result="success"),
+                StepStatus(step="phase_4_2", status="completed", completed_at="2026-04-01T15:00:00", result="success"),
+                StepStatus(step="phase_4_3", status="completed", completed_at="2026-04-01T15:30:00", result="success"),
+            ],
+            pending=[], errors=[], mode="auto",
+            project_dir=phase3_completed_state.project_dir,
+        )
+        assert _determine_next_step(state, orch_config) == "phase_5_outline_unit:global"
+
     def test_phase_5_outline_done_returns_phase_5_detail(self, tmp_path: Path):
         """Phase 5-outline done + outline file exists → phase_5_detail:{first_plan}."""
         state = _make_all_phase3_completed_state(tmp_path)
@@ -1921,6 +1939,86 @@ class TestDetermineNextStepFullFlow:
 
         result = _determine_next_step(state)
         assert result == "phase_5_detail:01-project-setup"
+
+    def test_codex_phase_5_outline_unit_progression_uses_features_then_finalize(self, tmp_path: Path):
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        state = _make_all_phase3_completed_state(tmp_path)
+        generated = tmp_path / "docs" / "generated"
+        (generated / "domain-extracts" / "payment").mkdir(parents=True, exist_ok=True)
+        ((generated / "domain-extracts" / "payment") / "_overview.md").write_text(
+            "payment overview\n",
+            encoding="utf-8",
+        )
+
+        state = OrchestratorState(
+            current=state.current,
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_4_1", status="completed", completed_at="2026-04-01T14:30:00", result="success"),
+                StepStatus(step="phase_4_2", status="completed", completed_at="2026-04-01T15:00:00", result="success"),
+                StepStatus(step="phase_4_3", status="completed", completed_at="2026-04-01T15:30:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:global", status="completed", completed_at="2026-04-01T16:00:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:payment:refund", status="completed", completed_at="2026-04-01T16:10:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:payment:checkout", status="completed", completed_at="2026-04-01T16:20:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:booking:reservation", status="completed", completed_at="2026-04-01T16:30:00", result="success"),
+            ],
+            pending=[],
+            errors=[],
+            mode="auto",
+            project_dir=str(tmp_path),
+        )
+
+        assert _determine_next_step(state, orch_config) == "phase_5_outline_unit:domain:payment"
+
+        state = OrchestratorState(
+            current=state.current,
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_5_outline_unit:domain:payment", status="completed", completed_at="2026-04-01T16:40:00", result="success"),
+            ],
+            pending=[],
+            errors=[],
+            mode="auto",
+            project_dir=str(tmp_path),
+        )
+
+        assert _determine_next_step(state, orch_config) == "phase_5_outline_finalize"
+
+    def test_codex_phase_5_finalize_done_returns_phase_5_detail(self, tmp_path: Path):
+        orch_config = DocsOrchestratorConfig(engine="codex")
+        state = _make_all_phase3_completed_state(tmp_path)
+        state = OrchestratorState(
+            current=state.current,
+            project_summary=state.project_summary,
+            completed=list(state.completed) + [
+                StepStatus(step="phase_4_1", status="completed", completed_at="2026-04-01T14:30:00", result="success"),
+                StepStatus(step="phase_4_2", status="completed", completed_at="2026-04-01T15:00:00", result="success"),
+                StepStatus(step="phase_4_3", status="completed", completed_at="2026-04-01T15:30:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:global", status="completed", completed_at="2026-04-01T16:00:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:payment:refund", status="completed", completed_at="2026-04-01T16:10:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:payment:checkout", status="completed", completed_at="2026-04-01T16:20:00", result="success"),
+                StepStatus(step="phase_5_outline_unit:booking:reservation", status="completed", completed_at="2026-04-01T16:30:00", result="success"),
+                StepStatus(step="phase_5_outline_finalize", status="completed", completed_at="2026-04-01T16:40:00", result="success"),
+            ],
+            pending=[],
+            errors=[],
+            mode="auto",
+            project_dir=str(tmp_path),
+        )
+
+        generated = tmp_path / "docs" / "generated"
+        generated.mkdir(parents=True, exist_ok=True)
+        outline = generated / "exec-plan-outline.md"
+        outline.write_text(
+            "## exec-plan 개요\n\n"
+            "| # | 파일명 | 범위 | Chunk 수 | 의존성 |\n"
+            "|---|--------|------|---------|--------|\n"
+            "| 1 | 01-project-setup.md | 초기화 | 5 | 없음 |\n"
+            "<!-- ORCHESTRATOR:DONE -->\n",
+            encoding="utf-8",
+        )
+
+        assert _determine_next_step(state, orch_config) == "phase_5_detail:01-project-setup"
 
     def test_phase_5_outline_done_with_no_parseable_plans_returns_done(self, tmp_path: Path):
         """Outline complete but no parseable plan rows/headers -> done."""

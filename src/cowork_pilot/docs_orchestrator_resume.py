@@ -163,6 +163,10 @@ def _docs_resume_expected_files(step: str, project_dir: Path) -> list[Path]:
         return [project_dir / "docs" / "QUALITY_SCORE.md"]
     if step == "phase_5_outline":
         return [generated / "exec-plan-outline.md"]
+    if step.startswith("phase_5_outline_unit:"):
+        return [generated / "exec-plan-outline.md"]
+    if step == "phase_5_outline_finalize":
+        return [generated / "exec-plan-outline.md"]
     if step.startswith("phase_5_detail:"):
         plan_name = step[len("phase_5_detail:"):]
         return [project_dir / "docs" / "exec-plans" / "planning" / f"{plan_name}.md"]

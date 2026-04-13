@@ -337,6 +337,42 @@ class TestRecoverRunningStep:
         assert len(result.completed) == 0
         assert any(p["step"] == "phase_5_outline" for p in result.pending)
 
+    def test_phase_5_outline_unit_recovery_uses_outline_file(self, tmp_path: Path) -> None:
+        outline = tmp_path / "docs" / "generated" / "exec-plan-outline.md"
+        outline.parent.mkdir(parents=True)
+        outline.write_text("# Outline\n<!-- ORCHESTRATOR:DONE -->\n", encoding="utf-8")
+        state = OrchestratorState(
+            current={
+                "phase": "phase_5",
+                "step": "phase_5_outline_unit:payment:refund",
+                "status": "running",
+            },
+            project_dir=str(tmp_path),
+        )
+        result = recover_running_step(state, tmp_path)
+
+        assert result.current["status"] == "idle"
+        assert len(result.completed) == 1
+        assert result.completed[0].step == "phase_5_outline_unit:payment:refund"
+
+    def test_phase_5_outline_finalize_recovery_uses_outline_file(self, tmp_path: Path) -> None:
+        outline = tmp_path / "docs" / "generated" / "exec-plan-outline.md"
+        outline.parent.mkdir(parents=True)
+        outline.write_text("# Outline\n<!-- ORCHESTRATOR:DONE -->\n", encoding="utf-8")
+        state = OrchestratorState(
+            current={
+                "phase": "phase_5",
+                "step": "phase_5_outline_finalize",
+                "status": "running",
+            },
+            project_dir=str(tmp_path),
+        )
+        result = recover_running_step(state, tmp_path)
+
+        assert result.current["status"] == "idle"
+        assert len(result.completed) == 1
+        assert result.completed[0].step == "phase_5_outline_finalize"
+
 
 # ── generate_gap_summary ─────────────────────────────────────────────
 

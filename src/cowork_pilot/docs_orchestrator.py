@@ -197,6 +197,19 @@ class WaitingResolutionResult:
     state: OrchestratorState
 
 
+@dataclass(frozen=True)
+class Phase5OutlineUnit:
+    step: str
+    unit_type: Literal["legacy", "global", "feature", "domain", "finalize"]
+    unit_id: str
+    label: str
+    spec_paths: tuple[str, ...] = ()
+    design_doc_paths: tuple[str, ...] = ()
+    overview_paths: tuple[str, ...] = ()
+    domain: str = ""
+    feature: str = ""
+
+
 def _resolve_waiting_runtime_from_stdin(
     config: Config,
     orch_config: DocsOrchestratorConfig,
@@ -488,7 +501,7 @@ def run_docs_orchestrator(
 
     # Main loop
     while True:
-        next_step = _determine_next_step(state)
+        next_step = _determine_next_step(state, orch_config)
 
         if next_step is None:
             # Check if this is a max-retry stop vs genuine completion
@@ -541,6 +554,15 @@ def run_docs_orchestrator(
             )
         elif next_step == "phase_5_outline":
             state = _run_phase_5_outline(
+                state, config, orch_config, project_dir, base_path, state_path,
+            )
+        elif next_step.startswith("phase_5_outline_unit:"):
+            state = _run_phase_5_outline_unit(
+                state, config, orch_config, project_dir, base_path, state_path,
+                next_step,
+            )
+        elif next_step == "phase_5_outline_finalize":
+            state = _run_phase_5_outline_finalize(
                 state, config, orch_config, project_dir, base_path, state_path,
             )
         elif next_step.startswith("phase_5_detail:"):
@@ -1832,6 +1854,362 @@ def _grep_forbidden_expressions(project_dir: Path) -> list[dict[str, str]]:
 # ── Phase 5 ─────────────────────────────────────────────────────────
 
 
+def _use_phase_5_shared_outline_units(
+    orch_config: DocsOrchestratorConfig | None,
+) -> bool:
+    """Return True when Phase 5 should use Codex-only shared-outline fan-out."""
+    if orch_config is None:
+        return False
+    return getattr(orch_config, "engine", "claude") == "codex"
+
+
+def _resolve_product_spec_path(
+    project_dir: Path,
+    domain: str,
+    feature: str,
+) -> Path:
+    """Return canonical product-spec path with single-hyphen fallback."""
+    specs_dir = project_dir / "docs" / "product-specs"
+    canonical = specs_dir / f"{domain}--{feature}.md"
+    if canonical.exists():
+        return canonical
+    fallback = specs_dir / f"{domain}-{feature}.md"
+    return fallback if fallback.exists() else canonical
+
+
+def _tokenize_outline_context(*parts: str) -> set[str]:
+    """Return lowercase tokens for fuzzy filename matching."""
+    tokens: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        lowered = part.lower()
+        tokens.add(lowered)
+        tokens.update(token for token in re.split(r"[-_:/\s]+", lowered) if token)
+    return tokens
+
+
+def _list_design_doc_paths(project_dir: Path) -> list[Path]:
+    """Return all design-doc markdown files except index.md."""
+    design_docs_dir = project_dir / "docs" / "design-docs"
+    if not design_docs_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in design_docs_dir.glob("*.md")
+        if path.name != "index.md"
+    )
+
+
+def _resolve_relevant_design_doc_paths(
+    project_dir: Path,
+    *,
+    unit_type: Literal["global", "feature", "domain"],
+    domain: str = "",
+    feature: str = "",
+) -> tuple[str, ...]:
+    """Resolve a narrow set of design-doc bodies for a Phase 5 outline unit."""
+    paths = _list_design_doc_paths(project_dir)
+    if not paths:
+        return ()
+
+    if unit_type == "global":
+        preferred = [
+            "core-beliefs.md",
+            "data-model.md",
+            "auth.md",
+            "deployment.md",
+        ]
+        selected = [
+            str(project_dir / "docs" / "design-docs" / name)
+            for name in preferred
+            if (project_dir / "docs" / "design-docs" / name).exists()
+        ]
+        if selected:
+            return tuple(selected)
+        return tuple(str(path) for path in paths[:4])
+
+    tokens = _tokenize_outline_context(domain, feature)
+    matches: list[str] = []
+    data_model_path = project_dir / "docs" / "design-docs" / "data-model.md"
+
+    for path in paths:
+        stem_tokens = _tokenize_outline_context(path.stem)
+        if tokens & stem_tokens:
+            matches.append(str(path))
+
+    if str(data_model_path) not in matches and data_model_path.exists():
+        matches.append(str(data_model_path))
+
+    if matches:
+        return tuple(matches)
+
+    fallback = paths[:1]
+    if data_model_path.exists():
+        fallback = [data_model_path]
+    return tuple(str(path) for path in fallback)
+
+
+def _resolve_overview_path(project_dir: Path, domain: str) -> tuple[str, ...]:
+    """Return the optional domain overview path if it exists."""
+    overview = project_dir / "docs" / "generated" / "domain-extracts" / domain / "_overview.md"
+    return (str(overview),) if overview.exists() else ()
+
+
+def _ordered_domains_from_state(state: OrchestratorState) -> list[str]:
+    """Return domains preserving state summary order when possible."""
+    summary_domains = state.project_summary.get("domains", [])
+    ordered = [str(domain) for domain in summary_domains if isinstance(domain, str)]
+    features = state.project_summary.get("features", {})
+    if isinstance(features, dict):
+        for domain in features:
+            domain_str = str(domain)
+            if domain_str not in ordered:
+                ordered.append(domain_str)
+    return ordered
+
+
+def _build_phase_5_outline_units(
+    state: OrchestratorState,
+    project_dir: Path,
+    *,
+    shared_outline_strategy: bool,
+) -> list[Phase5OutlineUnit]:
+    """Return outline session units for Phase 5."""
+    if not shared_outline_strategy:
+        return [
+            Phase5OutlineUnit(
+                step="phase_5_outline",
+                unit_type="legacy",
+                unit_id="legacy",
+                label="exec-plan outline",
+            )
+        ]
+
+    units: list[Phase5OutlineUnit] = [
+        Phase5OutlineUnit(
+            step="phase_5_outline_unit:global",
+            unit_type="global",
+            unit_id="global",
+            label="global",
+            design_doc_paths=_resolve_relevant_design_doc_paths(
+                project_dir,
+                unit_type="global",
+            ),
+        )
+    ]
+
+    features = state.project_summary.get("features", {})
+    if not isinstance(features, dict):
+        features = {}
+
+    ordered_domains = _ordered_domains_from_state(state)
+    for domain in ordered_domains:
+        feature_list = features.get(domain, [])
+        if not isinstance(feature_list, list):
+            continue
+        for feature in feature_list:
+            feature_str = str(feature)
+            units.append(
+                Phase5OutlineUnit(
+                    step=f"phase_5_outline_unit:{domain}:{feature_str}",
+                    unit_type="feature",
+                    unit_id=f"{domain}:{feature_str}",
+                    label=f"{domain}/{feature_str}",
+                    spec_paths=(
+                        str(_resolve_product_spec_path(project_dir, domain, feature_str)),
+                    ),
+                    design_doc_paths=_resolve_relevant_design_doc_paths(
+                        project_dir,
+                        unit_type="feature",
+                        domain=domain,
+                        feature=feature_str,
+                    ),
+                    overview_paths=_resolve_overview_path(project_dir, domain),
+                    domain=domain,
+                    feature=feature_str,
+                )
+            )
+
+    for domain in ordered_domains:
+        overview_paths = _resolve_overview_path(project_dir, domain)
+        if not overview_paths:
+            continue
+        domain_specs: list[str] = []
+        feature_list = features.get(domain, [])
+        if isinstance(feature_list, list):
+            domain_specs = [
+                str(_resolve_product_spec_path(project_dir, domain, str(feature)))
+                for feature in feature_list
+            ]
+        units.append(
+            Phase5OutlineUnit(
+                step=f"phase_5_outline_unit:domain:{domain}",
+                unit_type="domain",
+                unit_id=f"domain:{domain}",
+                label=f"{domain} domain",
+                spec_paths=tuple(domain_specs),
+                design_doc_paths=_resolve_relevant_design_doc_paths(
+                    project_dir,
+                    unit_type="domain",
+                    domain=domain,
+                ),
+                overview_paths=overview_paths,
+                domain=domain,
+            )
+        )
+
+    return units
+
+
+def _phase_5_outline_unit_for_step(
+    state: OrchestratorState,
+    project_dir: Path,
+    step: str,
+) -> Phase5OutlineUnit:
+    """Resolve the outline unit metadata for a concrete step name."""
+    for unit in _build_phase_5_outline_units(
+        state,
+        project_dir,
+        shared_outline_strategy=True,
+    ):
+        if unit.step == step:
+            return unit
+    raise ValueError(f"Unknown Phase 5 outline unit step: {step}")
+
+
+def _build_phase_5_outline_prompt_kwargs(
+    *,
+    project_dir: Path,
+    outline_mode: Literal["legacy", "unit", "finalize"],
+    unit: Phase5OutlineUnit | None = None,
+) -> dict[str, object]:
+    """Return prompt kwargs for Phase 5 outline variants."""
+    outline_path = project_dir / "docs" / "generated" / "exec-plan-outline.md"
+    kwargs: dict[str, object] = {
+        "project_dir": str(project_dir),
+        "outline_mode": outline_mode,
+        "shared_outline_exists": outline_path.exists(),
+        "shared_outline_path": str(outline_path),
+    }
+    if unit is not None:
+        kwargs.update(
+            {
+                "unit_type": unit.unit_type,
+                "unit_id": unit.unit_id,
+                "unit_label": unit.label,
+                "unit_domain": unit.domain,
+                "unit_feature": unit.feature,
+                "relevant_specs": list(unit.spec_paths),
+                "relevant_design_docs": list(unit.design_doc_paths),
+                "relevant_overviews": list(unit.overview_paths),
+            }
+        )
+    return kwargs
+
+
+def _run_phase_5_outline_variant(
+    state: OrchestratorState,
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    base_path: Path,
+    state_path: Path,
+    *,
+    step: str,
+    prompt_kwargs: dict[str, object],
+    note: str,
+) -> OrchestratorState:
+    """Execute one Phase 5 outline step variant."""
+    print(f"Phase 5-outline: {note}", file=sys.stderr)
+
+    state = _update_state_running(state, step)
+    save_state(state, state_path)
+
+    watch_mode = _determine_watch_mode(step, orch_config)
+    prompt = build_session_prompt(
+        "phase5_outline",
+        **prompt_kwargs,
+    )
+    expected = _parse_expected_files(prompt)
+
+    outcome = _execute_orchestrator_step(
+        step_name=step,
+        prompt=prompt,
+        prompt_phase="phase5_outline",
+        prompt_kwargs=prompt_kwargs,
+        expected_files=expected,
+        watch_mode=watch_mode,
+        config=config,
+        orch_config=orch_config,
+        project_dir=project_dir,
+        base_path=base_path,
+    )
+    if outcome.kind == "failed":
+        return _update_state_error(state, step, outcome.error or f"Phase 5-outline 단계 실행 실패: {step}")
+    if outcome.kind == "waiting":
+        return state
+
+    state = _update_state_completed(state, step, note)
+    save_state(state, state_path)
+    return state
+
+
+def _run_phase_5_outline_unit(
+    state: OrchestratorState,
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    base_path: Path,
+    state_path: Path,
+    step: str,
+) -> OrchestratorState:
+    """Phase 5-outline unit: shared-outline incremental authoring."""
+    unit = _phase_5_outline_unit_for_step(state, project_dir, step)
+    prompt_kwargs = _build_phase_5_outline_prompt_kwargs(
+        project_dir=project_dir,
+        outline_mode="unit",
+        unit=unit,
+    )
+    return _run_phase_5_outline_variant(
+        state,
+        config,
+        orch_config,
+        project_dir,
+        base_path,
+        state_path,
+        step=step,
+        prompt_kwargs=prompt_kwargs,
+        note=f"exec-plan outline 보강 완료: {unit.label}",
+    )
+
+
+def _run_phase_5_outline_finalize(
+    state: OrchestratorState,
+    config: Config,
+    orch_config: DocsOrchestratorConfig,
+    project_dir: Path,
+    base_path: Path,
+    state_path: Path,
+) -> OrchestratorState:
+    """Phase 5-outline finalize: normalize the shared outline."""
+    prompt_kwargs = _build_phase_5_outline_prompt_kwargs(
+        project_dir=project_dir,
+        outline_mode="finalize",
+    )
+    return _run_phase_5_outline_variant(
+        state,
+        config,
+        orch_config,
+        project_dir,
+        base_path,
+        state_path,
+        step="phase_5_outline_finalize",
+        prompt_kwargs=prompt_kwargs,
+        note="exec-plan outline 최종 정리 완료",
+    )
+
+
 def _run_phase_5_outline(
     state: OrchestratorState,
     config: Config,
@@ -1841,39 +2219,21 @@ def _run_phase_5_outline(
     state_path: Path,
 ) -> OrchestratorState:
     """Phase 5-outline: exec-plan design — 1 session (§5.5.1)."""
-    step = "phase_5_outline"
-    print("Phase 5-outline: exec-plan design", file=sys.stderr)
-
-    state = _update_state_running(state, step)
-    save_state(state, state_path)
-
-    watch_mode = _determine_watch_mode(step, orch_config)
-    prompt = build_session_prompt(
-        "phase5_outline",
-        project_dir=str(project_dir),
-    )
-    expected = _parse_expected_files(prompt)
-
-    outcome = _execute_orchestrator_step(
-        step_name=step,
-        prompt=prompt,
-        prompt_phase="phase5_outline",
-        prompt_kwargs=dict(project_dir=str(project_dir)),
-        expected_files=expected,
-        watch_mode=watch_mode,
-        config=config,
-        orch_config=orch_config,
+    prompt_kwargs = _build_phase_5_outline_prompt_kwargs(
         project_dir=project_dir,
-        base_path=base_path,
+        outline_mode="legacy",
     )
-    if outcome.kind == "failed":
-        return _update_state_error(state, step, outcome.error or "Phase 5-outline 단계 실행 실패")
-    if outcome.kind == "waiting":
-        return state
-
-    state = _update_state_completed(state, step, "exec-plan outline 설계 완료")
-    save_state(state, state_path)
-    return state
+    return _run_phase_5_outline_variant(
+        state,
+        config,
+        orch_config,
+        project_dir,
+        base_path,
+        state_path,
+        step="phase_5_outline",
+        prompt_kwargs=prompt_kwargs,
+        note="exec-plan outline 설계 완료",
+    )
 
 
 def _run_phase_5_detail(
@@ -2648,7 +3008,10 @@ def _update_state_error(
 _PHASE_1_5_MAX_RETRIES = 3
 
 
-def _determine_next_step(state: OrchestratorState) -> str | None:
+def _determine_next_step(
+    state: OrchestratorState,
+    orch_config: DocsOrchestratorConfig | None = None,
+) -> str | None:
     """Determine the next step based on current state.
 
     Phase 0 → 1 → 1.5 → 2 (per feature) → 2_summary → 3_A → 3_B (per feature)
@@ -2737,8 +3100,20 @@ def _determine_next_step(state: OrchestratorState) -> str | None:
         return "phase_4_3"
 
     # Phase 5: exec-plan generation
-    if "phase_5_outline" not in completed_steps:
-        return "phase_5_outline"
+    if _use_phase_5_shared_outline_units(orch_config):
+        outline_units = _build_phase_5_outline_units(
+            state,
+            Path(state.project_dir),
+            shared_outline_strategy=True,
+        )
+        for unit in outline_units:
+            if unit.step not in completed_steps:
+                return unit.step
+        if "phase_5_outline_finalize" not in completed_steps:
+            return "phase_5_outline_finalize"
+    else:
+        if "phase_5_outline" not in completed_steps:
+            return "phase_5_outline"
 
     # Phase 5 detail: one session per exec-plan in the outline
     outline_path = Path(state.project_dir) / _GENERATED_DIR / "exec-plan-outline.md"
